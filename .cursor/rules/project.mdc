@@ -1,0 +1,191 @@
+---
+description: Always-on project instructions for DeepCut
+alwaysApply: true
+---
+
+# Shares Gains UK Tax Calculator - Project Rule
+
+## Authoritative documentation
+
+- **`docs/PRD.md`** (including appendices) defines **what** to build and authoritative **domain** rules .
+- **`docs/IMPLEMENTATION_PLAN.md`** defines **milestones, sequencing, and scope**; align engineering work with it.
+- **This rule file** defines **engineering standards and conventions** only; it does not override product scope or domain rules. On conflict, **PRD wins**.
+
+
+---
+
+## Stack and tooling
+
+Unless explicitly instructed otherwise:
+
+- **Runtime / language:** Node.js >= 22.21.1, TypeScript targeting ES2023
+- **Data / validation:** zod, mongodb native Node.js driver
+- **Quality:** Jest, ESLint (TypeScript + strict project rules)
+
+**Gate:** use **`npm run validate`** when completing feature work or refactors. When bootstrapping or updating tooling, align with these choices.
+
+---
+
+## Architecture
+
+Follow **Domain-Driven Design**: domain boundaries and **ubiquitous language** aligned with the product. These conventions apply from the first commit—**scaffold gaps are not permission to bypass them**.
+
+### Layer responsibilities
+
+- **`src/domain`** — Entities, value objects, aggregates, domain services, domain events, **repository interfaces only**, and **canonical Zod schemas** in **`src/domain/schemas`**.
+- **`src/application`** — Use cases, command/query handlers, orchestration, DTO mapping at boundaries, transaction coordination via ports. **Not** the home for core business rules that belong in the domain.
+- **`src/infrastructure`** — Repository **implementations**, persistence models and MongoDB mappings, external API and messaging adapters, framework integration glue. **Not** the source of truth for domain concepts.
+- **`src/interfaces`** — Controllers, HTTP handlers, CLI, event consumers. layouts, and route handlers live here in practice (typically under **`src/app`**).
+- **`src/shared`** — Cross-cutting **technical** utilities only (not domain concepts).
+
+**Structure under `src/domain`:** `schemas/`, `entities/`, `value-objects/`, `aggregates/`, `services/` (domain services), `events/`, `repositories/` (interfaces only).
+
+**Canonical schemas:** all canonical domain Zod schemas live in **`src/domain/schemas`**. Do not put transport DTOs, HTTP-only validators, ORM-style models, or persistence mappings there—derive in **interfaces** or **infrastructure**.
+
+**Zod derivation rule:** any schema outside `src/domain/schemas` that describes the same business fields as a domain type should be composed from the domain schema, where common fields are available, with **`.pick()`**, **`.omit()`**, or **`.extend()`**—never duplicate constraints (e.g. regex, min/max, trim) in a parallel `z.object({ ... })`. Put domain-only concepts in `src/domain/schemas` first (e.g. a stub user identity), then extend for persistence or forms.
+
+**Dependency rule:** dependencies point **inward**: **`interfaces` → `application` → `domain`**. **`infrastructure`** may depend on **`domain`** and **`application`**. **`domain`** must **not** depend on **`application`**, **`interfaces`**, or **`infrastructure`**.
+
+**Allowed in `src/domain`:** business invariants, entities, value objects, aggregates, domain services, repository contracts, domain events, canonical schemas.
+
+**Not allowed in `src/domain`:** HTTP, framework wiring, ORM decorators, database drivers, external or messaging clients, UI.
+
+When changing code: preserve boundaries; reuse domain vocabulary; do not duplicate concepts across domain, transport, and persistence without derivation (**Zod:** `.pick()`, `.omit()`, `.extend()`). **Core business rules** belong in the **domain**; **orchestration** in **application**; **not** in controllers, route handlers, or repository **implementations**.
+
+### Persistence and database access
+
+MongoDB driver usage and repository **implementations** live in **`src/infrastructure`** and implement **`domain`** repository contracts. Do **not** use the MongoDB driver or ad hoc collection access in **`interfaces`**, **`application`**, or **`domain`**.
+
+**Database provisioning (explicit, not at app request time):**
+
+- **Collections, validators (`$jsonSchema`), and indexes** are applied by **`npm run db:init`** (`scripts/db-init.ts`), which calls **`initMongoDatabase`**. Run once per Atlas database / environment (local dev, CI database, deployment) before the app expects to read/write.
+- **`getMongoClient()`** must **not** create or migrate schema. It only connects and, on first use, **asserts** that all managed collections exist; if not, throw **`ConfigurationError`** with guidance to run **`db:init`**.
+- **`createConnectedMongoClient()`** connects without that check — use for **`db:init`**, **`db:teardown`**, and integration test setup that calls **`initMongoDatabase`** first.
+- **`npm run db:teardown`** (`scripts/db-teardown.ts`) drops managed collections for development resets; it requires **`ALLOW_DB_TEARDOWN=1`** to run. Do not rely on teardown in production workflows without an explicit operational decision.
+
+### Validation
+
+**Use `zod` for:** runtime validation; environment variables; domain and import inputs; data models where appropriate.
+
+**App and runtime**
+
+- **Composition:** define each conceptual model once in **`src/domain/schemas`**; derive everything else with `.pick()`, `.omit()`, `.extend()`—never copy-paste parallel `z.object` shapes for the same fields.
+- **Interfaces (route handlers, server actions):** request and form schemas **pick** or **extend** domain schemas.
+- **Edge:** validate HTTP payloads (and similar external inputs) in **`interfaces`** before **`application`** or **`domain`** runs.
+- **Types:** export `z.infer<typeof schema>` alongside every exported schema callers rely on.
+- **By concern:** domain invariants in **`domain`**; transport in **`interfaces`**; persistence and DB-specific checks in **`infrastructure`**.
+
+**Persistence (`src/infrastructure/persistence/schemas`)**
+
+- Build document Zod schemas by **extending** domain bases: e.g. `shareAcquisitionBaseSchema.extend({ holdingId, userId, createdAt, updatedAt })`, `holdingCreateSchema.extend({ createdAt, updatedAt })`, `userIdentitySchema.extend({ createdAt })`.
+- **BSON vs Zod string:** where MongoDB stores `ObjectId` but the domain uses string ids for API boundaries, keep Zod fields as `z.string()` for `$jsonSchema` generation and **map** `ObjectId` ↔ string in repository code only. TypeScript row types may use `Omit<z.infer<typeof docSchema>, 'holdingId'> & { holdingId: ObjectId }` (or equivalent) so implementations stay type-safe without putting `ObjectId` in **domain** Zod.
+
+**MongoDB (`$jsonSchema`)**
+
+Prefer **schema-first** persistence: Zod describes stored documents; **persistence** Zod in **`infrastructure`** is always composed from domain—collection validators are **not** a second canonical model.
+
+- **Applying validators to the server** happens only in **`initMongoDatabase`** (invoked by **`db:init`**), not during normal application requests.
+- **Zod → JSON Schema:** convert, then **sanitize** for MongoDB (e.g. drop unsupported keywords like `$schema`, `format`, `pattern`, or `const` where rejected; map `const` to single-value `enum`; coerce `integer` to `number`; `_id` as `bsonType: "objectId"` where appropriate). Implement as one **small, testable pipeline**, not per-collection ad hoc edits.
+- **Registry:** one lazy-loaded cached map from collection name to validator schema.
+- **Apply:** new collections: `createCollection` with `validator: { $jsonSchema: … }`; existing: **`collMod`**. Aim for **database-level** enforcement consistent with Zod-derived rules.
+
+Example (names illustrative; paths are domain → infrastructure → interfaces):
+
+```ts
+// domain/schemas/user.ts
+export const userIdentitySchema = z.object({ userId: z.string().min(1) });
+export const userStubDocumentSchema = userIdentitySchema.extend({ createdAt: z.date() });
+
+// infrastructure/persistence/schemas/user-record.ts — re-export or alias; no duplicated fields
+export const userDocumentSchema = userStubDocumentSchema;
+
+// domain + form
+export const stockSymbolSchema = z.string().trim().min(1).max(32).transform((s) => s.toUpperCase());
+export const createHoldingFormSchema = z.object({ symbol: stockSymbolSchema });
+```
+
+### Services and utilities
+
+Use **classes** for services and repository implementations when DI or stateful collaboration matters. **Domain services** (`src/domain/services`): logic that does not fit a single entity or value object. **Application:** orchestration only—do not hide domain rules there. Prefer **pure functions** for utilities; keep **`src/shared`** free of domain concepts unless intentionally shared.
+
+### Error handling
+
+Use custom errors extending **`AppError`** for validation, import/parsing, database, domain rule violations, and configuration errors. Use `try/catch` in async flows when errors must be translated or enriched.
+
+### Asynchronous code
+
+Use **`async`/`await`**. Avoid raw `.then()` / `.catch()` unless a legacy API requires them. Use `Promise.all` or `Promise.allSettled` when parallel work fits.
+
+---
+
+## Code style and linting
+
+### Formatting
+
+Spaces, not tabs; 2-space indent; Unix line endings; prefer max line length **100** where practical.
+
+### Control flow
+
+K&R / 1TBS braces. A single-line braceless `if` is allowed only with no `else`/`else if`, exactly one statement in the body, and readable line length. For braced `if`/`for`/`while`, add blank lines before/after blocks when it helps readability.
+
+### Imports
+
+Avoid barrel index files unless necessary. Order: external libraries → internal shared → internal app → relative. Use `import type` for type-only imports.
+
+### Comments and documentation
+
+JSDoc on exported classes, interfaces, and public methods. Comments explain **intent**, not names. Use `//` sparingly. **Do not** use `eslint-disable`—fix the issue.
+
+### Naming
+
+`camelCase` for variables and functions; `PascalCase` for classes and React components; `PascalCase` interfaces without `I`; boolean prefixes `is`/`has`/`should`; `UPPER_SNAKE_CASE` for module-level constants; **kebab-case** files and directories. Unit tests: **`*.test.ts`**; integration: **`*.int.test.ts`** under the test tree (see **Testing**).
+
+### TypeScript
+
+Prefer explicit named functions for top-level exports; arrow functions for callbacks. Avoid `any`; use `unknown` and narrow. Prefer `readonly` where it helps safety. Use `satisfies` where it tightens types. Prefer `Object.hasOwn()` over `hasOwnProperty`. Use `structuredClone` for deep copies when appropriate.
+
+### Logging
+
+- **Operational and diagnostic logging** (info, warn, error) goes through **`src/shared/app-logger.ts`**: **`logInfo`**, **`logWarn`**, **`logError`**.
+- Do **not** use **`console`** or **`process.stdout` / `process.stderr`** for that purpose outside that module.
+- **`no-console`** is turned **off** only for **`src/shared/app-logger.ts`** in **`eslint.config.mjs`**—not via `eslint-disable` in source.
+- Prefer **no** logging in **`src/domain`**; log at application, infrastructure, or interface boundaries when possible.
+- Rare non-logging uses of streams (e.g. binary output) are outside this convention.
+
+### ESLint and React
+
+**The ESLint configuration is the source of truth.** If this document and lint disagree, **change the code** to satisfy ESLint.
+
+Align with project rules, including where applicable: no lonely `if`; default parameters last; prefer `regexp.exec`; explicit member accessibility; consistent member ordering; promise-returning functions usually `async`; exhaustive `switch`; no unused vars except `_`-prefixed ignores; use **`src/shared/app-logger.ts`** for logging instead of raw `console` or process streams (see **Logging**); no nested ternaries; prefer regex literals; React Hooks rules; **do not** use array index as React `key`.
+
+---
+
+## Testing
+
+- **Layout:** **`src/test/unit`** and **`src/test/integration`** only—**no** co-located `foo.ts` + `foo.test.ts` next to production code. Mirror **`src/domain`**, **`src/application`**, etc. under the test tree (e.g. `src/test/unit/domain/...` for `src/domain/...`).
+- **When:** add or update tests for significant features, fixes, refactors; keep business logic testable in isolation; unit tests for calculation, parsing, normalisation, transformation; integration tests when repository, API, or persistence behaviour changes.
+- **Done means:** **`npm run validate`** passes. Prefer running **`npm run build`**, **`npm run lint`**, **`npm test`**, and **`npm run validate`** as part of that workflow; fix all issues and repeat until clean.
+
+---
+
+## Product and UX
+
+Optimise for clarity, correctness, explainability, trust, maintainable workflows, and extensible domain design. Avoid consumer-finance fluff, vague calculations with hidden assumptions, premature over-abstraction, UI that hides domain rules, and calculation logic embedded in components. When requirements are ambiguous, prefer stable domain boundaries, explicit assumptions, sensible configurability, and extension-friendly choices.
+
+Do **not** present the app as professional tax advice. Surface material assumptions in user-facing copy and outputs where results depend on them.
+
+---
+
+## Security and sensitive data
+
+Apply secure defaults and treat user financial data carefully (persistence, logging, errors, UI).
+
+---
+
+## Infrastructure and configuration
+
+- MongoDB Atlas is an external dependency.
+- **Single variable `MONGODB_URI`** for the connection string; encode username, password, and database name in the URI in `.env.example` and Docker. **Do not** add separate env vars for MongoDB user, password, or database name.
+- **Provision each target database** with **`npm run db:init`** before the application runs against it. Container/orchestrator images should document or automate that step for new environments.
+- Validate and centralise application configuration; never hard-code secrets.
+- Keep Docker assets aligned with runtime assumptions and environment-driven configuration (same core app as local dev).
