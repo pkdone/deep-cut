@@ -5,6 +5,7 @@
 .env.production.local
 .DS_Store
 dist/
+out/
 node_modules/
 .next/
 coverage/
