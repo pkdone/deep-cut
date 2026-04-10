@@ -199,6 +199,10 @@ DeepCut must be designed with these realities in mind:
 - Spotify developer-access restrictions may limit broad public usability of a Spotify-connected build
 - therefore, v1 should be treated as **personal-first / limited-usage by default**, even if the code repository is public
 
+### 7.3.1 Authentication model (v1)
+
+For v1, the user completes **Spotify OAuth in the browser on each cold start** of the application (no requirement to persist refresh tokens across app restarts for daily use).
+
 ### 7.4 Playback Preference
 
 DeepCut v1 should:
@@ -211,7 +215,7 @@ This fallback is not the preferred product outcome, but it is acceptable if nece
 
 ### 7.5 Acceptance Criteria
 
-- The user can connect a Spotify account from the app.
+- The user can connect a Spotify account from the app (**OAuth via browser on each cold start** for v1).
 - The app shows Spotify connection status in Settings.
 - If Spotify authentication fails, the user sees a clear error state.
 - The app can retrieve Spotify search results for:
@@ -237,6 +241,10 @@ DeepCut v1 must support:
 - scanning those folders
 - watching those folders for changes
 - reading embedded metadata/tags and embedded artwork from files
+
+For v1, the scanner must **not follow symbolic links** when discovering files under configured folders (symlinked directories and files are skipped for indexing).
+
+For capacity planning, v1 targets a local library on the order of **up to ~2,500 albums** (order-of-magnitude assumption; the app should still behave safely if the library is larger, but performance tuning prioritises this band).
 
 ### 8.2 Supported Local Format
 
@@ -318,6 +326,7 @@ When the same song exists across multiple sources:
 - it should appear as **one merged entry**
 - the merged entry must show multiple available source badges/icons
 - the default playback source is **Spotify** when available
+- the **primary displayed title (and related primary line metadata)** should come from **Spotify** when a Spotify match exists; when local metadata differs, a **subtitle** (or secondary line) may indicate the local variant without requiring per-track source override (see §9.5)
 
 ### 9.5 Source Override
 
@@ -331,7 +340,11 @@ Duplicate detection and Spotify-to-local fallback must use:
 
 Exact metadata identity is not required.
 
-### 9.7 Acceptance Criteria
+### 9.7 Search performance parameters (v1)
+
+v1 should apply **request debouncing** and **per-section result limits** for unified search so that ordinary typing and browsing stay responsive and Spotify API use stays bounded. Exact numeric values are left to implementation and should be tuned during development.
+
+### 9.8 Acceptance Criteria
 
 - The user can search across Spotify and local library content in one unified flow.
 - The user can restrict search to one source when desired.
@@ -428,6 +441,8 @@ On app restart, DeepCut must restore:
 - the last playback session
 - including last playlist/album/track and playback position
 
+**Playback position** after restore may **drift slightly** (on the order of a few seconds) compared to the exact pre-restart position; v1 does not require sample-accurate restore.
+
 DeepCut does **not** need to restore broader UI state such as:
 - window size/state
 - last-open screen
@@ -491,6 +506,8 @@ DeepCut must support global shortcuts for:
 - mute
 - open settings
 
+For v1, shortcuts use **fixed default bindings** only; **user-customisable keymaps** are not required.
+
 ### 11.3 Acceptance Criteria
 
 - The app responds appropriately to:
@@ -512,6 +529,7 @@ DeepCut must support global shortcuts for:
   - open settings
 - Shortcut actions should work consistently during normal app use.
 - Failure of an individual shortcut binding should not make playback controls unusable in the UI.
+- v1 does not require user-rebindable global shortcuts (fixed defaults only).
 
 ---
 
@@ -598,6 +616,8 @@ v1 must support:
 
 The user must select the active provider in Settings.
 
+For v1, the product does **not** specify fixed **token or cost limits** per enrichment request; implementations should still avoid runaway prompts via sensible defaults. If enrichment cannot run (for example **no API key**, **provider error**, or **network unavailable**), the user sees a **clear visible error** (see §13.8 and §13.9).
+
 ### 13.5 Output Format
 
 LLM output must be:
@@ -625,6 +645,8 @@ If artist enrichment fails:
 2. then partially render whatever valid data is available
 3. show a visible error message explaining the problem
 
+If there is **no cached enrichment** and the user is **offline** (or the LLM endpoint cannot be reached), the app must show a **clear message** that enrichment cannot be generated at this time, rather than an empty or misleading view.
+
 ### 13.9 Acceptance Criteria
 
 - Artist enrichment is generated on demand when the user opens or requests the artist page enrichment flow.
@@ -646,6 +668,7 @@ If artist enrichment fails:
 - If cached content exists, it can be displayed without regenerating immediately.
 - The user can manually refresh the artist cache immediately.
 - v1 is not required to show user-facing provenance/source attribution UI for generated enrichment.
+- When **offline** (or LLM unavailable) and **no cache** exists for the artist, the user sees a **clear message** explaining that enrichment is unavailable.
 
 ---
 
@@ -830,8 +853,9 @@ All app persistence should live in MongoDB, including:
 - playlists
 - artist enrichment cache
 - playback state
-- window/UI preferences
 - connected-service settings/config state
+
+v1 does **not** persist **window size, window position, or other shell layout state** in MongoDB (or elsewhere) for restore across restarts—consistent with §10.8 session restore excluding broader UI state.
 
 ### 17.4 Secrets and Local Configuration
 
