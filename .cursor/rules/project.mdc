@@ -3,14 +3,19 @@ description: Always-on project instructions for DeepCut
 alwaysApply: true
 ---
 
-# Shares Gains UK Tax Calculator - Project Rule
+# DeepCut — Project Rule
 
 ## Authoritative documentation
 
-- **`docs/PRD.md`** (including appendices) defines **what** to build and authoritative **domain** rules .
+- **`docs/PRD.md`** defines **what** to build and authoritative **product** rules.
 - **`docs/IMPLEMENTATION_PLAN.md`** defines **milestones, sequencing, and scope**; align engineering work with it.
-- **This rule file** defines **engineering standards and conventions** only; it does not override product scope or domain rules. On conflict, **PRD wins**.
+- **This rule file** defines **engineering standards and conventions** only; it does not override product scope. On conflict, **PRD wins**.
 
+---
+
+## Product context (for engineering alignment)
+
+DeepCut is a **single-user Linux desktop** music application (Electron per PRD) combining **Spotify** and **local MP3** libraries with **MongoDB** persistence and **LLM-backed artist enrichment**. Ubiquitous language should match the music domain (tracks, playlists, sources, enrichment), not the placeholder examples below when they conflict with real domain names in `src/domain`.
 
 ---
 
@@ -19,10 +24,13 @@ alwaysApply: true
 Unless explicitly instructed otherwise:
 
 - **Runtime / language:** Node.js >= 22.21.1, TypeScript targeting ES2023
-- **Data / validation:** zod, mongodb native Node.js driver
-- **Quality:** Jest, ESLint (TypeScript + strict project rules)
+- **Desktop shell:** **Electron** (preferred per PRD v1); exact major version and packaging toolchain are chosen during implementation and should be recorded in **`docs/IMPLEMENTATION_PLAN.md`** or an ADR when locked.
+- **Data / validation:** zod, MongoDB native Node.js driver
+- **Quality:** Jest, ESLint (TypeScript + strict project rules); **E2E** for critical flows per PRD (e.g. Playwright) when the harness exists
 
 **Gate:** use **`npm run validate`** when completing feature work or refactors. When bootstrapping or updating tooling, align with these choices.
+
+**Pending alignment:** the PRD suggests a companion **`docs/ENGINEERING_RULES.md`** and an ESLint rule appendix—when `eslint.config.mjs` lands, reconcile it with this document and the PRD so a single source of truth remains the ESLint config.
 
 ---
 
@@ -30,27 +38,35 @@ Unless explicitly instructed otherwise:
 
 Follow **Domain-Driven Design**: domain boundaries and **ubiquitous language** aligned with the product. These conventions apply from the first commit—**scaffold gaps are not permission to bypass them**.
 
+### Electron and process boundaries
+
+- Prefer a **single desktop app process model** per PRD (no separate background service unless unavoidable).
+- **Main process:** Node-capable code—file system, native integrations (media keys, global shortcuts), Spotify and LLM clients if kept off-renderer, MongoDB access via infrastructure only.
+- **Renderer:** UI; **must not** import MongoDB driver or bypass application/domain APIs for domain operations.
+- **Preload / contextBridge:** narrow, typed IPC surface; validate IPC payloads with **zod** at the boundary.
+- **Dependency direction** for Electron glue: **`interfaces/electron`** (or equivalent) may orchestrate IPC and call into **`application`**; it does not replace **`domain`** rules.
+
 ### Layer responsibilities
 
 - **`src/domain`** — Entities, value objects, aggregates, domain services, domain events, **repository interfaces only**, and **canonical Zod schemas** in **`src/domain/schemas`**.
 - **`src/application`** — Use cases, command/query handlers, orchestration, DTO mapping at boundaries, transaction coordination via ports. **Not** the home for core business rules that belong in the domain.
-- **`src/infrastructure`** — Repository **implementations**, persistence models and MongoDB mappings, external API and messaging adapters, framework integration glue. **Not** the source of truth for domain concepts.
-- **`src/interfaces`** — Controllers, HTTP handlers, CLI, event consumers. layouts, and route handlers live here in practice (typically under **`src/app`**).
-- **`src/shared`** — Cross-cutting **technical** utilities only (not domain concepts).
+- **`src/infrastructure`** — Repository **implementations**, persistence models and MongoDB mappings, external API adapters (Spotify, OpenAI, Anthropic), **filesystem scanning** implementations, and other IO. **Not** the source of truth for domain concepts.
+- **`src/interfaces`** — Controllers, HTTP handlers, CLI, event consumers; for this app, **Electron main/renderer/preload wiring**, windows, and route handlers live here in practice (typically under **`src/app`** or a dedicated `electron/` tree—see **`docs/IMPLEMENTATION_PLAN.md`** for the chosen layout).
+- **`src/shared`** — Cross-cutting **technical** utilities only (not domain concepts), including **`src/shared/app-logger.ts`** per logging rules.
 
 **Structure under `src/domain`:** `schemas/`, `entities/`, `value-objects/`, `aggregates/`, `services/` (domain services), `events/`, `repositories/` (interfaces only).
 
 **Canonical schemas:** all canonical domain Zod schemas live in **`src/domain/schemas`**. Do not put transport DTOs, HTTP-only validators, ORM-style models, or persistence mappings there—derive in **interfaces** or **infrastructure**.
 
-**Zod derivation rule:** any schema outside `src/domain/schemas` that describes the same business fields as a domain type should be composed from the domain schema, where common fields are available, with **`.pick()`**, **`.omit()`**, or **`.extend()`**—never duplicate constraints (e.g. regex, min/max, trim) in a parallel `z.object({ ... })`. Put domain-only concepts in `src/domain/schemas` first (e.g. a stub user identity), then extend for persistence or forms.
+**Zod derivation rule:** any schema outside `src/domain/schemas` that describes the same business fields as a domain type should be composed from the domain schema, where common fields are available, with **`.pick()`**, **`.omit()`**, or **`.extend()`**—never duplicate constraints (e.g. regex, min/max, trim) in a parallel `z.object({ ... })`. Put domain-only concepts in `src/domain/schemas` first, then extend for persistence or forms.
 
 **Dependency rule:** dependencies point **inward**: **`interfaces` → `application` → `domain`**. **`infrastructure`** may depend on **`domain`** and **`application`**. **`domain`** must **not** depend on **`application`**, **`interfaces`**, or **`infrastructure`**.
 
 **Allowed in `src/domain`:** business invariants, entities, value objects, aggregates, domain services, repository contracts, domain events, canonical schemas.
 
-**Not allowed in `src/domain`:** HTTP, framework wiring, ORM decorators, database drivers, external or messaging clients, UI.
+**Not allowed in `src/domain`:** HTTP, Electron IPC wiring, ORM decorators, database drivers, external or messaging clients, UI.
 
-When changing code: preserve boundaries; reuse domain vocabulary; do not duplicate concepts across domain, transport, and persistence without derivation (**Zod:** `.pick()`, `.omit()`, `.extend()`). **Core business rules** belong in the **domain**; **orchestration** in **application**; **not** in controllers, route handlers, or repository **implementations**.
+When changing code: preserve boundaries; reuse domain vocabulary; do not duplicate concepts across domain, transport, and persistence without derivation (**Zod:** `.pick()`, `.omit()`, `.extend()`). **Core business rules** belong in the **domain**; **orchestration** in **application**; **not** in UI components, IPC handlers, or repository **implementations** for rules that are truly domain-owned.
 
 ### Persistence and database access
 
@@ -63,6 +79,8 @@ MongoDB driver usage and repository **implementations** live in **`src/infrastru
 - **`createConnectedMongoClient()`** connects without that check — use for **`db:init`**, **`db:teardown`**, and integration test setup that calls **`initMongoDatabase`** first.
 - **`npm run db:teardown`** (`scripts/db-teardown.ts`) drops managed collections for development resets; it requires **`ALLOW_DB_TEARDOWN=1`** to run. Do not rely on teardown in production workflows without an explicit operational decision.
 
+**PRD note:** persistence scope includes library index, playlists, enrichment cache, playback state, settings, and **window/UI preferences**—implementations belong in infrastructure; domain schemas describe persisted shapes where they carry business meaning.
+
 ### Validation
 
 **Use `zod` for:** runtime validation; environment variables; domain and import inputs; data models where appropriate.
@@ -70,38 +88,40 @@ MongoDB driver usage and repository **implementations** live in **`src/infrastru
 **App and runtime**
 
 - **Composition:** define each conceptual model once in **`src/domain/schemas`**; derive everything else with `.pick()`, `.omit()`, `.extend()`—never copy-paste parallel `z.object` shapes for the same fields.
-- **Interfaces (route handlers, server actions):** request and form schemas **pick** or **extend** domain schemas.
-- **Edge:** validate HTTP payloads (and similar external inputs) in **`interfaces`** before **`application`** or **`domain`** runs.
+- **Interfaces (IPC handlers, forms):** request and payload schemas **pick** or **extend** domain schemas.
+- **Edge:** validate external inputs (IPC, Spotify web API payloads, LLM JSON) in **`interfaces`** or thin adapters before **`application`** or **`domain`** runs.
 - **Types:** export `z.infer<typeof schema>` alongside every exported schema callers rely on.
 - **By concern:** domain invariants in **`domain`**; transport in **`interfaces`**; persistence and DB-specific checks in **`infrastructure`**.
 
 **Persistence (`src/infrastructure/persistence/schemas`)**
 
-- Build document Zod schemas by **extending** domain bases: e.g. `shareAcquisitionBaseSchema.extend({ holdingId, userId, createdAt, updatedAt })`, `holdingCreateSchema.extend({ createdAt, updatedAt })`, `userIdentitySchema.extend({ createdAt })`.
-- **BSON vs Zod string:** where MongoDB stores `ObjectId` but the domain uses string ids for API boundaries, keep Zod fields as `z.string()` for `$jsonSchema` generation and **map** `ObjectId` ↔ string in repository code only. TypeScript row types may use `Omit<z.infer<typeof docSchema>, 'holdingId'> & { holdingId: ObjectId }` (or equivalent) so implementations stay type-safe without putting `ObjectId` in **domain** Zod.
+- Build document Zod schemas by **extending** domain bases; avoid duplicated field constraints.
+- **BSON vs Zod string:** where MongoDB stores `ObjectId` but the domain uses string ids for API boundaries, keep Zod fields as `z.string()` for `$jsonSchema` generation and **map** `ObjectId` ↔ string in repository code only. TypeScript row types may use `Omit<z.infer<typeof docSchema>, 'id'> & { id: ObjectId }` (or equivalent) so implementations stay type-safe without putting `ObjectId` in **domain** Zod.
 
 **MongoDB (`$jsonSchema`)**
 
 Prefer **schema-first** persistence: Zod describes stored documents; **persistence** Zod in **`infrastructure`** is always composed from domain—collection validators are **not** a second canonical model.
 
 - **Applying validators to the server** happens only in **`initMongoDatabase`** (invoked by **`db:init`**), not during normal application requests.
-- **Zod → JSON Schema:** convert, then **sanitize** for MongoDB (e.g. drop unsupported keywords like `$schema`, `format`, `pattern`, or `const` where rejected; map `const` to single-value `enum`; coerce `integer` to `number`; `_id` as `bsonType: "objectId"` where appropriate). Implement as one **small, testable pipeline**, not per-collection ad hoc edits.
+- **Zod → JSON Schema:** convert, then **sanitize** for MongoDB (e.g. drop unsupported keywords; map `const` to single-value `enum`; coerce `integer` to `number`; `_id` as `bsonType: "objectId"` where appropriate). Implement as one **small, testable pipeline**, not per-collection ad hoc edits.
 - **Registry:** one lazy-loaded cached map from collection name to validator schema.
 - **Apply:** new collections: `createCollection` with `validator: { $jsonSchema: … }`; existing: **`collMod`**. Aim for **database-level** enforcement consistent with Zod-derived rules.
 
-Example (names illustrative; paths are domain → infrastructure → interfaces):
+Illustrative pattern (domain → infrastructure; replace names with real music-domain types when implemented):
 
 ```ts
-// domain/schemas/user.ts
-export const userIdentitySchema = z.object({ userId: z.string().min(1) });
-export const userStubDocumentSchema = userIdentitySchema.extend({ createdAt: z.date() });
+// domain/schemas/playlist.ts (illustrative)
+export const playlistIdSchema = z.string().min(1);
+export const playlistBaseSchema = z.object({
+  playlistId: playlistIdSchema,
+  name: z.string().min(1),
+});
 
-// infrastructure/persistence/schemas/user-record.ts — re-export or alias; no duplicated fields
-export const userDocumentSchema = userStubDocumentSchema;
-
-// domain + form
-export const stockSymbolSchema = z.string().trim().min(1).max(32).transform((s) => s.toUpperCase());
-export const createHoldingFormSchema = z.object({ symbol: stockSymbolSchema });
+// infrastructure/persistence/schemas/playlist-document.ts
+export const playlistDocumentSchema = playlistBaseSchema.extend({
+  createdAt: z.date(),
+  updatedAt: z.date(),
+});
 ```
 
 ### Services and utilities
@@ -147,14 +167,15 @@ Prefer explicit named functions for top-level exports; arrow functions for callb
 ### Logging
 
 - **Operational and diagnostic logging** (info, warn, error) goes through **`src/shared/app-logger.ts`**: **`logInfo`**, **`logWarn`**, **`logError`**.
+- **Local log files** are required by the PRD for troubleshooting; implementation should rotate or bound size as appropriate—details belong in application/infrastructure, not in **`src/domain`**.
 - Do **not** use **`console`** or **`process.stdout` / `process.stderr`** for that purpose outside that module.
 - **`no-console`** is turned **off** only for **`src/shared/app-logger.ts`** in **`eslint.config.mjs`**—not via `eslint-disable` in source.
 - Prefer **no** logging in **`src/domain`**; log at application, infrastructure, or interface boundaries when possible.
-- Rare non-logging uses of streams (e.g. binary output) are outside this convention.
+- **Never** log raw API keys, Spotify tokens, or full `MONGODB_URI` strings.
 
 ### ESLint and React
 
-**The ESLint configuration is the source of truth.** If this document and lint disagree, **change the code** to satisfy ESLint.
+**The ESLint configuration is the source of truth.** If this document and lint disagree, **change the code** or **update the config** deliberately—not informal drift.
 
 Align with project rules, including where applicable: no lonely `if`; default parameters last; prefer `regexp.exec`; explicit member accessibility; consistent member ordering; promise-returning functions usually `async`; exhaustive `switch`; no unused vars except `_`-prefixed ignores; use **`src/shared/app-logger.ts`** for logging instead of raw `console` or process streams (see **Logging**); no nested ternaries; prefer regex literals; React Hooks rules; **do not** use array index as React `key`.
 
@@ -163,29 +184,44 @@ Align with project rules, including where applicable: no lonely `if`; default pa
 ## Testing
 
 - **Layout:** **`src/test/unit`** and **`src/test/integration`** only—**no** co-located `foo.ts` + `foo.test.ts` next to production code. Mirror **`src/domain`**, **`src/application`**, etc. under the test tree (e.g. `src/test/unit/domain/...` for `src/domain/...`).
-- **When:** add or update tests for significant features, fixes, refactors; keep business logic testable in isolation; unit tests for calculation, parsing, normalisation, transformation; integration tests when repository, API, or persistence behaviour changes.
+- **E2E:** when introduced, live under an agreed directory (e.g. `src/test/e2e` or `e2e/`) and cover the PRD’s minimal flows (Spotify connect, local scan, search/play, mixed playlist, artist enrichment).
+- **When:** add or update tests for significant features, fixes, refactors; unit tests for fuzzy matching, enrichment parsing, caching policy, and normalisation; integration tests when repository, IPC, or persistence behaviour changes.
 - **Done means:** **`npm run validate`** passes. Prefer running **`npm run build`**, **`npm run lint`**, **`npm test`**, and **`npm run validate`** as part of that workflow; fix all issues and repeat until clean.
 
 ---
 
 ## Product and UX
 
-Optimise for clarity, correctness, explainability, trust, maintainable workflows, and extensible domain design. Avoid consumer-finance fluff, vague calculations with hidden assumptions, premature over-abstraction, UI that hides domain rules, and calculation logic embedded in components. When requirements are ambiguous, prefer stable domain boundaries, explicit assumptions, sensible configurability, and extension-friendly choices.
+Optimise for clarity, correctness, explainability, and maintainable workflows. Avoid vague behaviour, hidden assumptions, and domain logic embedded in UI components. When requirements are ambiguous, prefer stable domain boundaries, explicit assumptions, and extension-friendly choices.
 
-Do **not** present the app as professional tax advice. Surface material assumptions in user-facing copy and outputs where results depend on them.
+**LLM and third parties:** do not present artist enrichment as authoritative fact; surface that content is generated and may be wrong or incomplete where the UI allows (per PRD failure and provenance posture).
 
 ---
 
 ## Security and sensitive data
 
-Apply secure defaults and treat user financial data carefully (persistence, logging, errors, UI).
+Apply secure defaults. Treat **Spotify tokens**, **LLM API keys**, **local file paths**, and **connection strings** as sensitive: avoid logging them, restrict renderer access to secrets, and prefer main-process or secure storage patterns as the implementation matures.
 
 ---
 
 ## Infrastructure and configuration
 
-- MongoDB Atlas is an external dependency.
-- **Single variable `MONGODB_URI`** for the connection string; encode username, password, and database name in the URI in `.env.example` and Docker. **Do not** add separate env vars for MongoDB user, password, or database name.
-- **Provision each target database** with **`npm run db:init`** before the application runs against it. Container/orchestrator images should document or automate that step for new environments.
+- MongoDB Atlas (or compatible) is an external dependency.
+- **Single variable `MONGODB_URI`** for the connection string; encode username, password, and database name in the URI in `.env.example` when present. **Do not** add separate env vars for MongoDB user, password, or database name.
+- **Provision each target database** with **`npm run db:init`** before the application runs against it.
 - Validate and centralise application configuration; never hard-code secrets.
-- Keep Docker assets aligned with runtime assumptions and environment-driven configuration (same core app as local dev).
+- **v1 PRD:** Docker-based dev/runtime is **out of scope**—do not assume Docker for local workflows unless the PRD changes.
+
+---
+
+## Gaps and completeness (this file)
+
+The following are **intentionally incomplete** until the scaffold exists or decisions are recorded:
+
+- **Exact Electron + build + `.deb` pipeline** (versions, `electron-builder` vs alternatives)—track in **`docs/IMPLEMENTATION_PLAN.md`** and ADRs.
+- **`docs/ENGINEERING_RULES.md`**—optional companion called out by the PRD; may duplicate this file unless we split “always-on Cursor rules” vs “contributor handbook.”
+- **IPC channel naming and preload API surface**—define with types and zod when code lands.
+- **Audio playback stack for local MP3** (e.g. Web Audio vs native module)—decision in plan/ADR.
+- **Spotify Web Playback SDK vs remote control fallback**—product allows fallback; record the chosen approach when known.
+
+When any of the above is decided, **update `docs/IMPLEMENTATION_PLAN.md` or add an ADR** so agents and humans stay aligned.
