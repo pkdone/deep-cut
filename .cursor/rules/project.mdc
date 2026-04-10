@@ -15,7 +15,9 @@ alwaysApply: true
 
 ## Product context (for engineering alignment)
 
-DeepCut is a **single-user Linux desktop** music application (Electron per PRD) combining **Spotify** and **local MP3** libraries with **MongoDB** persistence and **LLM-backed artist enrichment**. Ubiquitous language should match the music domain (tracks, playlists, sources, enrichment), not the placeholder examples below when they conflict with real domain names in `src/domain`.
+DeepCut is a **single-user Linux desktop** music application (Electron per PRD) combining **Spotify** and **local MP3** libraries with **MongoDB Atlas** persistence and **LLM-backed artist enrichment**. Ubiquitous language should match the music domain (tracks, playlists, sources, enrichment), not the placeholder examples below when they conflict with real domain names in `src/domain`.
+
+**v1 decisions (see `docs/IMPLEMENTATION_PLAN.md` §6):** Spotify **browser OAuth each cold start**; **no symlink following** for local scans; **~2,500 albums** nominal local scale; **fixed** global shortcuts; **no** persisted window/layout state; merged duplicates **Spotify-first** with optional **local subtitle**.
 
 ---
 
@@ -79,7 +81,7 @@ MongoDB driver usage and repository **implementations** live in **`src/infrastru
 - **`createConnectedMongoClient()`** connects without that check — use for **`db:init`**, **`db:teardown`**, and integration test setup that calls **`initMongoDatabase`** first.
 - **`npm run db:teardown`** (`scripts/db-teardown.ts`) drops managed collections for development resets; it requires **`ALLOW_DB_TEARDOWN=1`** to run. Do not rely on teardown in production workflows without an explicit operational decision.
 
-**PRD note:** persistence scope includes library index, playlists, enrichment cache, playback state, settings, and **window/UI preferences**—implementations belong in infrastructure; domain schemas describe persisted shapes where they carry business meaning.
+**PRD note:** persistence scope includes library index, playlists, enrichment cache, playback state, and settings—implementations belong in infrastructure; domain schemas describe persisted shapes where they carry business meaning. **v1 does not** persist window size, position, or shell layout (see PRD §10.8, §17.3).
 
 ### Validation
 
@@ -200,7 +202,7 @@ Optimise for clarity, correctness, explainability, and maintainable workflows. A
 
 ## Security and sensitive data
 
-Apply secure defaults. Treat **Spotify tokens**, **LLM API keys**, **local file paths**, and **connection strings** as sensitive: avoid logging them, restrict renderer access to secrets, and prefer main-process or secure storage patterns as the implementation matures.
+Apply secure defaults. Treat **Spotify tokens** (typically **in-memory for the session** in v1—OAuth each cold start), **LLM API keys**, **local file paths**, and **connection strings** as sensitive: avoid logging them, restrict renderer access to secrets, and keep long-lived secrets in main process storage where applicable.
 
 ---
 

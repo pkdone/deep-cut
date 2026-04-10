@@ -20,7 +20,7 @@ Dependency rule: **interfaces → application → domain**; **infrastructure** d
 | Concern | Direction |
 |--------|-----------|
 | **MongoDB** | Only from **main** (or a dedicated main-side worker module), via **infrastructure** repositories; never from renderer. |
-| **Secrets** | Spotify tokens, LLM keys: stored and refreshed in **main**; renderer receives only **opaque session state** or **masked status** via IPC. |
+| **Secrets** | **LLM API keys** and other long-lived settings: stored and validated in **main**; renderer receives only **masked status** or non-secret values via IPC. **Spotify (v1):** OAuth in the browser **on each cold start**—tokens may be **in-memory for the session** only (no cross-restart refresh-token persistence required). |
 | **Local files** | Scanning, `fs` access, and optional native decode paths live in **main** / infrastructure; renderer gets **metadata DTOs** and **playback URLs or IPC streams** as designed. |
 | **IPC** | Typed channels; **zod**-validate every inbound payload in **interfaces** before calling application services. |
 | **LLM calls** | Prefer **main-side** HTTP to avoid CORS and to centralise keys; return parsed DTOs to renderer. |
@@ -28,11 +28,12 @@ Dependency rule: **interfaces → application → domain**; **infrastructure** d
 ### 1.3 Cross-cutting modules (likely)
 
 - **`src/shared`**: `app-logger`, small helpers, shared constants; **no** domain vocabulary beyond technical concerns.
-- **Optional `src/electron` or `electron/`** at repo root: if the team prefers clear separation, **bootstrap** (`main.ts`, `preload.ts`) may live here with imports into `src/interfaces`—**one** canonical layout should be chosen early and recorded in an ADR (see §7).
+- **Optional `src/electron` or `electron/`** at repo root: if the team prefers clear separation, **bootstrap** (`main.ts`, `preload.ts`) may live here with imports into `src/interfaces`—**one** canonical layout should be chosen early and recorded in an ADR (see §9).
 
 ### 1.4 Risk-driven allowances
 
 - **Spotify playback**: PRD allows in-app playback **or** fallback to controlling the Spotify app. The implementation plan assumes **try Web Playback / embedded path first**, then **document fallback** (Connect / D-Bus / `playerctl`—**TBD**) in an ADR once researched on Ubuntu 24.04+.
+- **Local library scale (v1):** design and test with **~2,500 albums** as the nominal local catalogue size; **symlinks are not followed** when scanning.
 - **Single process**: no separate daemon unless watch scale or audio constraints force it—justify in an ADR if added.
 
 ---
@@ -98,9 +99,9 @@ Aligned with **`docs/PRD.md`** §3, §14, §22. Summary:
 | **Platform** | Ubuntu 24.04+; run from repo + **`.deb`** install |
 | **Shell** | Electron + TypeScript; single-process model |
 | **Sources** | Spotify + **local MP3** only |
-| **Data** | MongoDB via **`MONGODB_URI`**; playlists app-owned (not native Spotify playlists) |
+| **Data** | **MongoDB Atlas** (or compatible) via **`MONGODB_URI`**; playlists app-owned (not native Spotify playlists); **network required** for app persistence (local playback still works offline with already-indexed files per PRD) |
 | **Core UX** | Home, Search, Artist, Album, Playlist, Now Playing, Settings |
-| **Search** | Unified, **grouped by type**, source badges, source filter, **merged duplicates** (fuzzy), default play source Spotify when available |
+| **Search** | Unified, **grouped by type**, source badges, source filter, **merged duplicates** (fuzzy), default play source Spotify when available; **debounce + per-section caps** (tune in implementation) |
 | **Playback** | In-app preferred; cross-source handoff acceptable; failure → local fuzzy fallback → error → skip |
 | **Playlists** | CRUD, reorder, mixed sources, persist |
 | **Artist intelligence** | LLM (OpenAI + Anthropic selectable), strict JSON, schema in prompt, **30-day cache**, manual refresh, retry once, partial render on failure |
@@ -119,13 +120,13 @@ Suggested order (from PRD §25, refined):
 
 1. **Tooling + app shell**: TypeScript, ESLint, Jest, Electron **hello window**, dark theme shell, navigation placeholders, **`npm run validate`**.
 2. **MongoDB + settings**: `MONGODB_URI`, `db:init`, connection health in Settings, **ConfigurationError** path, persist minimal settings.
-3. **Local library**: folder pick, MP3 scan, tags/artwork, watch + reindex (simple remove/reimport), domain + repos + UI browse path.
+3. **Local library**: folder pick, MP3 scan (**do not follow symlinks**), tags/artwork, watch + reindex (simple remove/reimport), domain + repos + UI browse path; design for **~2,500 albums** local scale assumption.
 4. **Local playback**: Now Playing minimal controls, session fields in DB, **restore on restart** (track, position, context).
-5. **Spotify**: OAuth/connect, search API, metadata; attempt **in-app playback**; failure behaviour per PRD; Settings status.
-6. **Unified search + merge**: grouped results, filters, fuzzy duplicate merge, Spotify-preferred play on merged rows.
+5. **Spotify**: **browser OAuth on each cold start**, search API, metadata; attempt **in-app playback**; failure behaviour per PRD; Settings status.
+6. **Unified search + merge**: grouped results, filters, fuzzy duplicate merge, Spotify-preferred play on merged rows; **Spotify-primary title** with optional **subtitle** for differing local metadata.
 7. **Playlists**: app playlists in MongoDB, mixed playback, reorder/remove.
 8. **Artist enrichment**: LLM adapters (OpenAI, Anthropic), JSON schema validation, cache + refresh UI, offline cached read.
-9. **Hardening**: media keys, global shortcuts, local logs, `.deb`, E2E suite for PRD flows.
+9. **Hardening**: media keys, **fixed-default** global shortcuts, local logs, `.deb`, E2E suite for PRD flows.
 
 Dependencies: 3 before 4; 5 before 6–7; 8 can overlap 5+ after cache/settings exist. **Exact parallelisation** is flexible; keep slices **vertically shippable** where possible.
 
@@ -149,21 +150,22 @@ Illustrative—not exhaustive. Names will evolve with ubiquitous language.
 
 ---
 
-## 6. Open questions
+## 6. Resolved product decisions (v1)
 
-### 6.1 Product / UX (unresolved in PRD—needs your input)
+| Topic | Decision |
+|-------|-----------|
+| **Spotify auth** | **Browser OAuth on every cold start**; no requirement to persist refresh tokens across restarts for daily use. |
+| **MongoDB** | **Atlas** (hosted); app data paths assume a reachable cluster when online. |
+| **Playback position restore** | **Small drift** after restart is acceptable (order of seconds). |
+| **Artist enrichment, offline, no cache** | Show a **clear message** that enrichment cannot be generated (alongside normal Spotify metadata shell where applicable). |
+| **LLM limits / errors** | **No fixed product token/cost limits** in v1; if the user has not configured a key or the provider fails, show a **visible error** (per PRD failure handling). |
+| **Search** | Implement **debouncing** and **per-section result limits**; tune numbers during development. |
+| **Merged duplicate display** | **Spotify-first** primary line; **subtitle** (or secondary line) may reflect differing local metadata. |
+| **Local scan** | **Do not follow symlinks**; assume on the order of **~2,500 albums** locally for performance assumptions. |
+| **Global shortcuts** | **Fixed defaults** only in v1 (no user keymap editor). |
+| **Window / layout persistence** | **Do not** persist window size, position, or shell layout in MongoDB or elsewhere for v1 (aligned with PRD §10.8 and §17.3). |
 
-1. **Spotify “connection” for daily use**: Are you okay requiring **browser OAuth each cold start**, or do you want **long-lived refresh** with a **secure store** (e.g. OS keychain via Electron) as a v1 must-have?
-2. **MongoDB for a single-user desktop app**: Is **Atlas-only** acceptable for offline-first local playback (network required for app data), or do you want **embedded/local MongoDB** (e.g. FerretDB, local `mongod`) for v1?
-3. **Playback position restore**: Tolerance for **±1–2 s** drift after restart? Any requirement to **persist seek** only on pause vs periodic?
-4. **Artist page without cache**: First visit with no cache and **offline**—show **Spotify-only** metadata shell, or **block** the page with a clear message?
-5. **LLM cost control**: Max tokens per request, **model names** (e.g. fixed vs user-selectable within provider), and whether to **disable** enrichment if no API key?
-6. **Search latency**: Target debounce and **max results** per section to keep Spotify API use reasonable?
-7. **Merged duplicates**: When both sources exist but metadata differs wildly, should the UI show **one canonical title** (which source wins) vs a **disambiguation** line—still without per-track override?
-8. **Local folder scope**: Symlinks, **hidden** directories, and **max library size** expectations for v1?
-9. **Keyboard shortcuts**: Default keymap only, or **user-rebindable** in v1 (PRD lists required actions but not customisability)?
-
-### 6.2 Technical (to resolve during implementation)
+## 7. Open questions (technical)
 
 - **Electron version** and **security** defaults (`contextIsolation`, `sandbox`, CSP).
 - **Local audio**: Node decoder vs Chromium vs native module for gapless/seek—impact on Now Playing.
@@ -173,7 +175,7 @@ Illustrative—not exhaustive. Names will evolve with ubiquitous language.
 
 ---
 
-## 7. Validation strategy
+## 8. Validation strategy
 
 | Layer | What to run | Purpose |
 |-------|-------------|---------|
@@ -187,15 +189,15 @@ Illustrative—not exhaustive. Names will evolve with ubiquitous language.
 
 ---
 
-## 8. ADRs worth writing now
+## 9. ADRs worth writing now
 
 Draft these **early** to reduce rework; store as `docs/adr/NNN-title.md` (or `docs/adr/README.md` listing them).
 
 | ADR | Question | Why now |
 |-----|----------|---------|
 | **ADR-001 Electron process and IPC** | Where main/preload/renderer live; IPC naming; zod at boundary | Touches every feature |
-| **ADR-002 MongoDB topology for DeepCut** | Atlas vs local; offline behaviour; single `MONGODB_URI` | Blocks settings and persistence |
-| **ADR-003 Spotify auth and token storage** | OAuth flow; secure storage; refresh | Blocks Spotify features |
+| **ADR-002 MongoDB topology for DeepCut** | **Atlas**; offline behaviour for local playback vs online persistence; single `MONGODB_URI` | Blocks settings and persistence |
+| **ADR-003 Spotify auth (v1)** | Browser OAuth each cold start; in-memory session tokens; no cross-restart persistence | Blocks Spotify features |
 | **ADR-004 Spotify playback strategy** | Web Playback vs Connect vs hybrid; Linux constraints | Highest delivery risk per PRD |
 | **ADR-005 Local audio stack** | How MP3 is decoded and wired to UI/seek | Drives Now Playing and tests |
 | **ADR-006 LLM integration** | Provider abstraction; strict JSON; errors/retries; models | Artist enrichment core path |
@@ -204,7 +206,7 @@ Optional soon after: **fuzzy matching algorithm** choice, **deb packaging** tool
 
 ---
 
-## 9. Document maintenance
+## 10. Document maintenance
 
 - Update this file when **milestones reorder**, **scope** changes, or **major technical choices** land.
 - Keep **`.cursor/rules/project.mdc`** aligned with **tooling** (e.g. ESLint) and **non-negotiable boundaries**; put **long narrative** here or in ADRs.
