@@ -129,6 +129,12 @@ export function PlaylistPage(): React.ReactElement {
           type="button"
           className="ghost"
           onClick={() => {
+            const ok = window.confirm(
+              `Delete playlist "${pl.name}"? This cannot be undone.`
+            );
+            if (!ok) {
+              return;
+            }
             void window.deepcut.deletePlaylist(pl.playlistId).then(() => {
               window.location.hash = '#/';
             });

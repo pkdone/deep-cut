@@ -14,7 +14,12 @@ import { MongoArtistEnrichmentRepository } from '../../infrastructure/persistenc
 import { MongoLocalTrackRepository } from '../../infrastructure/persistence/mongo-local-track-repository.js';
 import { MongoPlaybackSessionRepository } from '../../infrastructure/persistence/mongo-playback-session-repository.js';
 import { MongoPlaylistRepository } from '../../infrastructure/persistence/mongo-playlist-repository.js';
-import { getArtistAlbums, getArtistTopTracks, spotifySearch } from '../../infrastructure/spotify/spotify-api.js';
+import {
+  fetchSpotifySearchUrl,
+  getArtistAlbums,
+  getArtistTopTracks,
+  spotifySearch,
+} from '../../infrastructure/spotify/spotify-api.js';
 import { startSpotifyAuthorization } from '../../infrastructure/spotify/spotify-oauth.js';
 import { logError, logInfo, logWarn } from '../../shared/app-logger.js';
 import { ConfigurationError, ValidationError } from '../../shared/errors.js';
@@ -26,6 +31,7 @@ import {
   savePlaylistPayload,
   saveSettingsPayload,
   unifiedSearchPayload,
+  spotifySearchNextPayload,
 } from '../ipc-contract.js';
 
 let spotifyAccessToken: string | null = null;
@@ -286,9 +292,21 @@ export function registerIpcHandlers(params: {
         albums: [],
         tracks: built.tracks.filter((t) => t.local !== undefined),
         playlists: built.playlists.filter((p) => p.owner === 'DeepCut'),
+        spotifyPaging: null,
       };
     }
     return built;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.spotifySearchNext, async (_e, raw: unknown) => {
+    const parsed = spotifySearchNextPayload.safeParse(raw);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid spotifySearchNext payload');
+    }
+    if (!spotifyAccessToken || Date.now() >= spotifyExpiresAtMs - 60_000) {
+      throw new ValidationError('Spotify not connected or token expired');
+    }
+    return fetchSpotifySearchUrl(spotifyAccessToken, parsed.data.url);
   });
 
   ipcMain.handle(IPC_CHANNELS.getPlaylists, async () => {
@@ -330,6 +348,13 @@ export function registerIpcHandlers(params: {
     const db = client.db();
     const playlistRepo = new MongoPlaylistRepository(db.collection(MongoPlaylistRepository.collectionName));
     await playlistRepo.deleteById(id);
+    const settingsRepo = new MongoAppSettingsRepository(
+      db.collection(MongoAppSettingsRepository.collectionName)
+    );
+    const s = (await settingsRepo.get()) ?? defaultSettings();
+    if (s.lastAddToPlaylistId === id) {
+      await settingsRepo.save({ ...s, lastAddToPlaylistId: undefined });
+    }
     return { ok: true as const };
   });
 

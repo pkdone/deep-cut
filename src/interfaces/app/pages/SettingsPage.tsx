@@ -19,7 +19,6 @@ export function SettingsPage(): React.ReactElement {
 
   return (
     <div className="settings-page">
-      <h1>Settings</h1>
       <div className="panel">
         <h2>Database</h2>
         <p>Status: {mongo}</p>

@@ -1,3 +1,4 @@
+import type { SpotifySearchResults } from '../../application/unified-search.js';
 import type { AppSettings } from '../../domain/schemas/app-settings.js';
 import type { PlaybackSession } from '../../domain/schemas/playback-session.js';
 import type { Playlist } from '../../domain/schemas/playlist.js';
@@ -24,6 +25,7 @@ export interface DeepcutApi {
   spotifyLogout: () => Promise<{ ok: boolean }>;
   spotifyStatus: () => Promise<{ connected: boolean; expiresAtMs: number }>;
   unifiedSearch: (p: UnifiedSearchPayload) => Promise<unknown>;
+  spotifySearchNext: (p: { url: string }) => Promise<SpotifySearchResults>;
   getPlaylists: () => Promise<Playlist[]>;
   savePlaylist: (p: unknown) => Promise<{ ok: boolean }>;
   deletePlaylist: (id: string) => Promise<{ ok: boolean }>;

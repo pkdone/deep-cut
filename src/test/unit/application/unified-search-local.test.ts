@@ -1,4 +1,4 @@
-import { buildUnifiedSearch } from '../../../application/unified-search.js';
+import { buildUnifiedSearch, MAX_UNIFIED_SECTION_ITEMS } from '../../../application/unified-search.js';
 import type { LocalTrack } from '../../../domain/schemas/local-track.js';
 
 function lt(p: Partial<LocalTrack> & Pick<LocalTrack, 'localTrackId' | 'filePath' | 'title'>): LocalTrack {
@@ -75,5 +75,51 @@ describe('buildUnifiedSearch local artists and albums', () => {
     });
     expect(r.localAlbums).toHaveLength(1);
     expect(r.localAlbums[0]?.album).toBe('Beta');
+  });
+
+  it('returns more than 20 local artists when the library has many distinct artists (capped by MAX_UNIFIED_SECTION_ITEMS)', () => {
+    const locals: LocalTrack[] = [];
+    for (let i = 0; i < 25; i += 1) {
+      locals.push(
+        lt({
+          localTrackId: `id-${i}`,
+          filePath: `/m/${i}.mp3`,
+          title: `T${i}`,
+          artist: `Artist ${i}`,
+          album: 'Album',
+        })
+      );
+    }
+    const r = buildUnifiedSearch({
+      spotify: null,
+      locals,
+      appPlaylists: [],
+      query: '',
+    });
+    expect(r.localArtists).toHaveLength(25);
+    expect(r.spotifyPaging).toBeNull();
+    expect(r.usedLocalTrackIds).toHaveLength(0);
+  });
+
+  it('caps local artists at MAX_UNIFIED_SECTION_ITEMS', () => {
+    const locals: LocalTrack[] = [];
+    for (let i = 0; i < MAX_UNIFIED_SECTION_ITEMS + 10; i += 1) {
+      locals.push(
+        lt({
+          localTrackId: `id-${i}`,
+          filePath: `/m/${i}.mp3`,
+          title: `T${i}`,
+          artist: `Artist ${i}`,
+          album: 'Album',
+        })
+      );
+    }
+    const r = buildUnifiedSearch({
+      spotify: null,
+      locals,
+      appPlaylists: [],
+      query: '',
+    });
+    expect(r.localArtists).toHaveLength(MAX_UNIFIED_SECTION_ITEMS);
   });
 });
