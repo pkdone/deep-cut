@@ -15,16 +15,37 @@ Linux desktop music player (Electron): **Spotify** + **local MP3**, **MongoDB At
 3. `npm run db:init` — creates collections and indexes (run once per database).
 4. `npm run dev` — start the app in development mode.
 
+### Chromium sandbox (Linux)
+
+Electron ships a setuid helper at `node_modules/electron/dist/chrome-sandbox`. For Chromium’s sandbox to work, that file must be **owned by root** and have mode **4755**. The repo’s `dev` script expects this (plain `electron-vite dev`).
+
+After `npm install`, run once per machine (or again after upgrading the `electron` package, which replaces the file):
+
+```bash
+sudo chown root:root node_modules/electron/dist/chrome-sandbox
+sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+```
+
+If you **cannot** use setuid (no sudo), set `ELECTRON_DISABLE_SANDBOX=1` only for dev, for example in `package.json`:
+
+```json
+"dev": "ELECTRON_DISABLE_SANDBOX=1 electron-vite dev"
+```
+
+If Electron still complains about the sandbox, confirm the path exists and repeat the `chown`/`chmod` after a fresh `npm install`.
+
 ## Scripts
 
-| Script | Purpose |
-|--------|---------|
-| `npm run dev` | Electron + Vite dev |
-| `npm run build:app` | Production build to `out/` |
-| `npm run build` | Build + Linux `.deb` (requires packaging step) |
-| `npm run validate` | `lint` + `test` + `build:app` |
-| `npm run db:init` | Initialise MongoDB collections |
+
+| Script                | Purpose                                          |
+| --------------------- | ------------------------------------------------ |
+| `npm run dev`         | Electron + Vite dev                              |
+| `npm run build:app`   | Production build to `out/`                       |
+| `npm run build`       | Build + Linux `.deb` (requires packaging step)   |
+| `npm run validate`    | `lint` + `test` + `build:app`                    |
+| `npm run db:init`     | Initialise MongoDB collections                   |
 | `npm run db:teardown` | Drop managed collections (`ALLOW_DB_TEARDOWN=1`) |
+
 
 ## Product rules
 

@@ -23,9 +23,16 @@ export default defineConfig({
   preload: {
     resolve: { alias },
     build: {
-      externalizeDeps: true,
+      // Bundle app deps (e.g. zod) into preload.cjs; sandboxed preload cannot resolve node_modules.
+      externalizeDeps: false,
       rollupOptions: {
         input: path.resolve(__dirname, 'src/interfaces/electron-preload/preload.ts'),
+        // Sandboxed preload must be CommonJS: ESM (.mjs) fails with
+        // "Cannot use import statement outside a module" in the sandbox loader.
+        output: {
+          format: 'cjs',
+          entryFileNames: 'preload.cjs',
+        },
       },
     },
   },

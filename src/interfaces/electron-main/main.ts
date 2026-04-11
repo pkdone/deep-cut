@@ -1,5 +1,5 @@
-import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { app, BrowserWindow } from 'electron';
 import { loadEnv } from '../../shared/load-env.js';
 import { logError, logInfo } from '../../shared/app-logger.js';
@@ -18,6 +18,35 @@ const getMongoUri = (): string => {
 
 let mainWindow: BrowserWindow | null = null;
 
+/**
+ * Allow first load from about:blank and in-app navigations (same http(s) origin or
+ * same file tree). Blocks opening arbitrary external URLs from the renderer.
+ */
+function isNavigationAllowed(current: string, next: string): boolean {
+  if (!current || current === 'about:blank' || current === 'about:srcdoc') {
+    return true;
+  }
+  try {
+    const nextUrl = new URL(next);
+    const curUrl = new URL(current);
+    if (
+      (nextUrl.protocol === 'http:' || nextUrl.protocol === 'https:') &&
+      (curUrl.protocol === 'http:' || curUrl.protocol === 'https:')
+    ) {
+      return nextUrl.origin === curUrl.origin;
+    }
+    if (nextUrl.protocol === 'file:' && curUrl.protocol === 'file:') {
+      const curFile = fileURLToPath(curUrl.href);
+      const nextFile = fileURLToPath(nextUrl.href);
+      const appDir = dirname(curFile);
+      return nextFile === appDir || nextFile.startsWith(`${appDir}/`);
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
 function broadcastLibraryUpdated(): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('deepcut:onLibraryUpdated');
@@ -29,7 +58,7 @@ function createWindow(): void {
     width: 1100,
     height: 760,
     webPreferences: {
-      preload: join(__dirname, '../preload/preload.mjs'),
+      preload: join(__dirname, '../preload/preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -78,7 +107,8 @@ app.on('web-contents-created', (_e, contents) => {
     if (contents.getType() === 'webview') {
       return;
     }
-    if (url !== contents.getURL()) {
+    const current = contents.getURL();
+    if (!isNavigationAllowed(current, url)) {
       event.preventDefault();
     }
   });
