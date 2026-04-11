@@ -48,12 +48,19 @@ export interface UnifiedSearchRow {
   readonly local?: { localTrackId: string; filePath: string; durationMs: number };
 }
 
+export interface LocalSearchAlbum {
+  readonly artist: string;
+  readonly album: string;
+  readonly trackCount: number;
+}
+
 export interface UnifiedSearchResult {
   readonly artists: SpotifyArtist[];
   readonly albums: SpotifyAlbum[];
   readonly tracks: UnifiedSearchRow[];
   readonly playlists: SpotifyPlaylist[];
   readonly localArtists: { name: string; trackCount: number }[];
+  readonly localAlbums: LocalSearchAlbum[];
 }
 
 export function getSearchDebounceMs(): number {
@@ -88,12 +95,36 @@ export function buildUnifiedSearch(params: {
   const spotifyPlaylists = (spotify?.playlists ?? []).slice(0, CAP);
 
   const localArtistMap = new Map<string, number>();
+  const localAlbumMap = new Map<string, { artist: string; album: string; trackCount: number }>();
   for (const t of localsFiltered) {
     localArtistMap.set(t.artist, (localArtistMap.get(t.artist) ?? 0) + 1);
+    const albumKey = `${t.artist}\0${t.album}`;
+    const cur = localAlbumMap.get(albumKey);
+    if (cur !== undefined) {
+      cur.trackCount += 1;
+    } else {
+      localAlbumMap.set(albumKey, { artist: t.artist, album: t.album, trackCount: 1 });
+    }
   }
   const localArtists = [...localArtistMap.entries()]
     .map(([name, trackCount]) => ({ name, trackCount }))
     .filter((a) => q === '' || a.name.toLowerCase().includes(q))
+    .sort((a, b) => b.trackCount - a.trackCount || a.name.localeCompare(b.name))
+    .slice(0, CAP);
+
+  const localAlbums = [...localAlbumMap.values()]
+    .filter(
+      (x) =>
+        q === '' ||
+        x.artist.toLowerCase().includes(q) ||
+        x.album.toLowerCase().includes(q)
+    )
+    .sort(
+      (a, b) =>
+        b.trackCount - a.trackCount ||
+        a.album.localeCompare(b.album) ||
+        a.artist.localeCompare(b.artist)
+    )
     .slice(0, CAP);
 
   const usedLocal = new Set<string>();
@@ -185,5 +216,6 @@ export function buildUnifiedSearch(params: {
     tracks: rows.slice(0, CAP),
     playlists,
     localArtists,
+    localAlbums,
   };
 }

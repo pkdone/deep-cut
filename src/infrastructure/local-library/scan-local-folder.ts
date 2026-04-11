@@ -4,6 +4,11 @@ import { parseFile } from 'music-metadata';
 import { v4 as uuidv4 } from 'uuid';
 import type { LocalTrack } from '../../domain/schemas/local-track.js';
 import { logWarn } from '../../shared/app-logger.js';
+import {
+  displayAlbumFromCommon,
+  displayArtistFromCommon,
+  displayTitleFromCommon,
+} from './read-id3-display-tags.js';
 
 const MP3 = /\.mp3$/i;
 
@@ -29,11 +34,10 @@ export async function scanLocalFolder(rootDir: string): Promise<LocalTrack[]> {
   for (const filePath of files) {
     try {
       const meta = await parseFile(filePath, { duration: true });
-      const title =
-        meta.common.title?.trim() ||
-        path.basename(filePath, path.extname(filePath));
-      const artist = meta.common.artist?.trim() || 'Unknown Artist';
-      const album = meta.common.album?.trim() || 'Unknown Album';
+      const basename = path.basename(filePath, path.extname(filePath));
+      const title = displayTitleFromCommon(meta.common, basename);
+      const artist = displayArtistFromCommon(meta.common);
+      const album = displayAlbumFromCommon(meta.common);
       const durationMs = Math.round((meta.format.duration ?? 0) * 1000);
       tracks.push({
         localTrackId: uuidv4(),

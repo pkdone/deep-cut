@@ -1,6 +1,6 @@
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, Menu } from 'electron';
 import { loadEnv } from '../../shared/load-env.js';
 import { logError, logInfo } from '../../shared/app-logger.js';
 import { ConfigurationError } from '../../shared/errors.js';
@@ -81,6 +81,7 @@ function createWindow(): void {
 }
 
 void app.whenReady().then(() => {
+  Menu.setApplicationMenu(null);
   registerIpcHandlers({
     getMongoUri,
     getMainWindow: () => mainWindow,
