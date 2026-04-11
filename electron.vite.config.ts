@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
+import { defineConfig } from 'electron-vite';
 import react from '@vitejs/plugin-react';
 
 const alias = {
@@ -12,18 +12,18 @@ const alias = {
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
     resolve: { alias },
     build: {
+      externalizeDeps: true,
       rollupOptions: {
         input: path.resolve(__dirname, 'src/interfaces/electron-main/main.ts'),
       },
     },
   },
   preload: {
-    plugins: [externalizeDepsPlugin()],
     resolve: { alias },
     build: {
+      externalizeDeps: true,
       rollupOptions: {
         input: path.resolve(__dirname, 'src/interfaces/electron-preload/preload.ts'),
       },

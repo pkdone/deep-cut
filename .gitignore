@@ -6,6 +6,7 @@
 .DS_Store
 dist/
 out/
+release/
 node_modules/
 .next/
 coverage/
