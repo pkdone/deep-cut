@@ -40,19 +40,27 @@ function SpeakerMutedIcon(): ReactElement {
   );
 }
 
+function spotifyArtistLine(j: { artists?: { name?: string }[] }): string {
+  const names = j.artists?.map((a) => a.name).filter((n): n is string => Boolean(n)) ?? [];
+  return names.join(', ');
+}
+
 export function NowPlayingBar(): ReactElement {
   const pb = usePlayback();
   const cur = pb.current;
   const [trackTitle, setTrackTitle] = useState<string>('Nothing playing');
+  const [trackArtist, setTrackArtist] = useState<string>('');
 
   useEffect(() => {
     if (cur === null) {
       setTrackTitle('Nothing playing');
+      setTrackArtist('');
       return undefined;
     }
     if (cur.source === 'local') {
       let cancelled = false;
       setTrackTitle('…');
+      setTrackArtist('');
       void window.deepcut.getLocalTracks().then((raw) => {
         if (cancelled) {
           return;
@@ -61,8 +69,10 @@ export function NowPlayingBar(): ReactElement {
         const t = tracks.find((x) => x.localTrackId === cur.localTrackId);
         if (t !== undefined) {
           setTrackTitle(t.title);
+          setTrackArtist(t.artist);
         } else {
           setTrackTitle(basenameFromPath(cur.filePath));
+          setTrackArtist('');
         }
       });
       return () => {
@@ -71,11 +81,13 @@ export function NowPlayingBar(): ReactElement {
     }
     const ac = new AbortController();
     setTrackTitle('…');
+    setTrackArtist('');
     void (async (): Promise<void> => {
       try {
         const token = await window.deepcut.getSpotifyAccessToken();
         if (!token) {
           setTrackTitle('Spotify');
+          setTrackArtist('');
           return;
         }
         const res = await fetch(
@@ -84,13 +96,16 @@ export function NowPlayingBar(): ReactElement {
         );
         if (!res.ok) {
           setTrackTitle('Spotify');
+          setTrackArtist('');
           return;
         }
-        const j = (await res.json()) as { name?: string };
+        const j = (await res.json()) as { name?: string; artists?: { name?: string }[] };
         setTrackTitle(j.name ?? 'Spotify');
+        setTrackArtist(spotifyArtistLine(j));
       } catch {
         if (!ac.signal.aborted) {
           setTrackTitle('Spotify');
+          setTrackArtist('');
         }
       }
     })();
@@ -109,16 +124,17 @@ export function NowPlayingBar(): ReactElement {
   return (
     <div className="now-playing-bar">
       <div className="np-meta">
-        <h3>{trackTitle}</h3>
         {cur !== null ? (
-          <p className="np-meta-badge-row">
-            <span
-              className={`badge ${cur.source === 'spotify' ? 'badge-spotify' : 'badge-local'}`}
-            >
-              {label}
-            </span>
-          </p>
+          <span
+            className={`badge np-meta-source-badge ${cur.source === 'spotify' ? 'badge-spotify' : 'badge-local'}`}
+          >
+            {label}
+          </span>
         ) : null}
+        <div className="np-meta-text">
+          <h3>{trackTitle}</h3>
+          {trackArtist !== '' ? <div className="np-meta-artist">{trackArtist}</div> : null}
+        </div>
       </div>
       <div className="np-controls">
         <div className="np-transport">

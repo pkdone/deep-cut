@@ -1,49 +1,58 @@
 import type {
   SpotifyAlbum,
   SpotifyArtist,
+  SpotifyPagingLinks,
   SpotifyPlaylist,
   SpotifySearchResults,
   SpotifyTrack,
 } from '../../application/unified-search.js';
 import { ExternalServiceError } from '../../shared/errors.js';
 
-export async function spotifySearch(
-  accessToken: string,
-  query: string
-): Promise<SpotifySearchResults> {
-  const u = new URL('https://api.spotify.com/v1/search');
-  u.searchParams.set('q', query);
-  u.searchParams.set('type', 'artist,album,track,playlist');
-  u.searchParams.set('limit', '20');
-  const res = await fetch(u, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (!res.ok) {
-    throw new ExternalServiceError(`Spotify search failed: ${res.status}`);
-  }
-  const data = (await res.json()) as {
-    artists?: { items: { id: string; name: string }[] };
-    albums?: {
-      items: {
-        id: string;
-        name: string;
-        artists: { name: string }[];
-        release_date?: string;
-      }[];
-    };
-    tracks?: {
-      items: {
-        id: string;
-        name: string;
-        uri: string;
-        duration_ms: number;
-        artists: { name: string }[];
-        album: { name: string };
-      }[];
-    };
-    playlists?: { items: { id: string; name: string; owner: { display_name: string } }[] };
+function pagingFrom(
+  next: string | null | undefined,
+  previous: string | null | undefined
+): SpotifyPagingLinks {
+  return {
+    next: next ?? null,
+    previous: previous ?? null,
   };
+}
 
+/** Maps Spotify Web API /v1/search JSON to our result shape (shared by initial search and `next` URLs). */
+export function mapSpotifySearchJson(data: {
+  artists?: {
+    items: { id: string; name: string }[];
+    next?: string | null;
+    previous?: string | null;
+  };
+  albums?: {
+    items: {
+      id: string;
+      name: string;
+      artists: { name: string }[];
+      release_date?: string;
+    }[];
+    next?: string | null;
+    previous?: string | null;
+  };
+  tracks?: {
+    items: {
+      id: string;
+      name: string;
+      uri: string;
+      duration_ms: number;
+      artists: { name: string }[];
+      album: { name: string };
+    }[];
+    next?: string | null;
+    previous?: string | null;
+  };
+  playlists?: {
+    items: { id: string; name: string; owner: { display_name: string } }[];
+    next?: string | null;
+    previous?: string | null;
+  };
+}): SpotifySearchResults {
   const artists: SpotifyArtist[] = (data.artists?.items ?? []).map((a) => ({
     id: a.id,
     name: a.name,
@@ -68,7 +77,69 @@ export async function spotifySearch(
     owner: p.owner.display_name,
   }));
 
-  return { artists, albums, tracks, playlists };
+  return {
+    artists,
+    albums,
+    tracks,
+    playlists,
+    paging: {
+      artists: pagingFrom(data.artists?.next, data.artists?.previous),
+      albums: pagingFrom(data.albums?.next, data.albums?.previous),
+      tracks: pagingFrom(data.tracks?.next, data.tracks?.previous),
+      playlists: pagingFrom(data.playlists?.next, data.playlists?.previous),
+    },
+  };
+}
+
+export function assertSpotifyApiSearchUrl(url: string): void {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    throw new ExternalServiceError('Invalid Spotify search URL');
+  }
+  if (u.protocol !== 'https:') {
+    throw new ExternalServiceError('Spotify search URL must use HTTPS');
+  }
+  if (u.hostname !== 'api.spotify.com') {
+    throw new ExternalServiceError('Spotify search URL must target api.spotify.com');
+  }
+  if (!u.pathname.startsWith('/v1/')) {
+    throw new ExternalServiceError('Spotify search URL must be under /v1/');
+  }
+}
+
+export async function fetchSpotifySearchUrl(
+  accessToken: string,
+  url: string
+): Promise<SpotifySearchResults> {
+  assertSpotifyApiSearchUrl(url);
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) {
+    throw new ExternalServiceError(`Spotify search page failed: ${res.status}`);
+  }
+  const data = (await res.json()) as Parameters<typeof mapSpotifySearchJson>[0];
+  return mapSpotifySearchJson(data);
+}
+
+export async function spotifySearch(
+  accessToken: string,
+  query: string
+): Promise<SpotifySearchResults> {
+  const u = new URL('https://api.spotify.com/v1/search');
+  u.searchParams.set('q', query);
+  u.searchParams.set('type', 'artist,album,track,playlist');
+  u.searchParams.set('limit', '20');
+  const res = await fetch(u, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) {
+    throw new ExternalServiceError(`Spotify search failed: ${res.status}`);
+  }
+  const data = (await res.json()) as Parameters<typeof mapSpotifySearchJson>[0];
+  return mapSpotifySearchJson(data);
 }
 
 export async function getArtistTopTracks(

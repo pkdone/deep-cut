@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('deepcut', {
   spotifyLogout: async () => ipcRenderer.invoke(IPC_CHANNELS.spotifyLogout),
   spotifyStatus: async () => ipcRenderer.invoke(IPC_CHANNELS.spotifyStatus),
   unifiedSearch: async (p: unknown) => ipcRenderer.invoke(IPC_CHANNELS.unifiedSearch, p),
+  spotifySearchNext: async (p: unknown) => ipcRenderer.invoke(IPC_CHANNELS.spotifySearchNext, p),
   getPlaylists: async () => ipcRenderer.invoke(IPC_CHANNELS.getPlaylists),
   savePlaylist: async (p: unknown) => ipcRenderer.invoke(IPC_CHANNELS.savePlaylist, p),
   deletePlaylist: async (id: string) => ipcRenderer.invoke(IPC_CHANNELS.deletePlaylist, id),

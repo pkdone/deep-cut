@@ -6,7 +6,6 @@ export function NowPlayingPage(): React.ReactElement {
 
   return (
     <div>
-      <h1>Now playing</h1>
       {cur ? (
         <div className="panel">
           <p>

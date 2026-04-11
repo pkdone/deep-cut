@@ -15,6 +15,7 @@ export const IPC_CHANNELS = {
   spotifyStatus: 'deepcut:spotifyStatus',
   spotifySearch: 'deepcut:spotifySearch',
   unifiedSearch: 'deepcut:unifiedSearch',
+  spotifySearchNext: 'deepcut:spotifySearchNext',
   getPlaylists: 'deepcut:getPlaylists',
   savePlaylist: 'deepcut:savePlaylist',
   deletePlaylist: 'deepcut:deletePlaylist',
@@ -36,6 +37,10 @@ export const savePlaybackPayload = playbackSessionSchema;
 export const unifiedSearchPayload = z.object({
   query: z.string(),
   sourceFilter: z.enum(['all', 'spotify', 'local']),
+});
+
+export const spotifySearchNextPayload = z.object({
+  url: z.string().url(),
 });
 
 export const spotifySearchPayload = z.object({
