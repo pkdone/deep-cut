@@ -7,6 +7,8 @@ import { AlbumPage } from './pages/AlbumPage.js';
 import { PlaylistPage } from './pages/PlaylistPage.js';
 import { NowPlayingPage } from './pages/NowPlayingPage.js';
 import { SettingsPage } from './pages/SettingsPage.js';
+import { LocalAlbumPage } from './pages/LocalAlbumPage.js';
+import { LocalArtistPage } from './pages/LocalArtistPage.js';
 
 export function App(): React.ReactElement {
   return (
@@ -14,6 +16,8 @@ export function App(): React.ReactElement {
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/search" element={<SearchPage />} />
+        <Route path="/local-artist/:encodedName" element={<LocalArtistPage />} />
+        <Route path="/local-album/:encodedArtist/:encodedAlbum" element={<LocalAlbumPage />} />
         <Route path="/artist/:artistId" element={<ArtistPage />} />
         <Route path="/album/:albumId" element={<AlbumPage />} />
         <Route path="/playlist/:playlistId" element={<PlaylistPage />} />

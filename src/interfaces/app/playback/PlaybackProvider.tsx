@@ -16,6 +16,7 @@ interface PlaybackState {
   positionMs: number;
   durationMs: number;
   volume: number;
+  isMuted: boolean;
   queue: TrackRef[];
   queueIndex: number;
   context: PbCtx;
@@ -29,6 +30,7 @@ interface PlaybackApi extends PlaybackState {
   next: () => Promise<void>;
   previous: () => Promise<void>;
   setVolume: (v: number) => Promise<void>;
+  toggleMute: () => Promise<void>;
   setQueue: (tracks: TrackRef[], startIndex: number, ctx: PbCtx) => Promise<void>;
 }
 
@@ -45,6 +47,8 @@ function pathToFileUrl(p: string): string {
 
 export function PlaybackProvider({ children }: { readonly children: ReactNode }): React.ReactElement {
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const volumeRef = useRef(0.9);
+  const mutedRef = useRef(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [state, setState] = useState<PlaybackState>({
@@ -53,11 +57,20 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
     positionMs: 0,
     durationMs: 0,
     volume: 0.9,
+    isMuted: false,
     queue: [],
     queueIndex: 0,
     context: { kind: 'none' },
     error: null,
   });
+
+  useEffect(() => {
+    volumeRef.current = state.volume;
+  }, [state.volume]);
+
+  useEffect(() => {
+    mutedRef.current = state.isMuted;
+  }, [state.isMuted]);
 
   const stopSpotifyPoll = (): void => {
     if (pollRef.current) {
@@ -111,7 +124,8 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
         return;
       }
       a.src = pathToFileUrl(ref.filePath);
-      a.volume = state.volume;
+      a.volume = volumeRef.current;
+      a.muted = mutedRef.current;
       await a.play().catch((e: unknown) => {
         setState((p) => ({ ...p, error: String(e) }));
       });
@@ -133,7 +147,7 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
         updatedAt: new Date(),
       });
     },
-    [persistSession, state.volume]
+    [persistSession]
   );
 
   const playSpotify = useCallback(
@@ -363,19 +377,68 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
   }, [playRefInternal, state]);
 
   const setVolume = useCallback(async (v: number): Promise<void> => {
-    const vol = Math.min(1, Math.max(0, v));
-    setState((p) => ({ ...p, volume: vol }));
-    if (audioRef.current) {
-      audioRef.current.volume = vol;
+    if (!Number.isFinite(v)) {
+      return;
     }
+    const vol = Math.min(1, Math.max(0, v));
+    setState((p) => ({ ...p, volume: vol, isMuted: false }));
+
+    const cur = state.current;
+    if (cur?.source === 'local' && audioRef.current) {
+      const a = audioRef.current;
+      a.volume = vol;
+      a.muted = false;
+    }
+
+    if (cur?.source !== 'spotify') {
+      return;
+    }
+
     const token = await window.deepcut.getSpotifyAccessToken();
-    if (token) {
-      await fetch(`https://api.spotify.com/v1/me/player/volume?volume_percent=${Math.round(vol * 100)}`, {
+    if (!token) {
+      return;
+    }
+    try {
+      await fetch(
+        `https://api.spotify.com/v1/me/player/volume?volume_percent=${Math.round(vol * 100)}`,
+        {
+          method: 'PUT',
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+    } catch {
+      /* ignore network errors */
+    }
+  }, [state]);
+
+  const toggleMute = useCallback(async (): Promise<void> => {
+    const cur = state.current;
+    const nextMuted = !state.isMuted;
+    setState((p) => ({ ...p, isMuted: nextMuted }));
+
+    if (cur?.source === 'local' && audioRef.current) {
+      audioRef.current.muted = nextMuted;
+      return;
+    }
+
+    if (cur?.source !== 'spotify') {
+      return;
+    }
+
+    const token = await window.deepcut.getSpotifyAccessToken();
+    if (!token) {
+      return;
+    }
+    const pct = nextMuted ? 0 : Math.round(volumeRef.current * 100);
+    try {
+      await fetch(`https://api.spotify.com/v1/me/player/volume?volume_percent=${pct}`, {
         method: 'PUT',
         headers: { Authorization: `Bearer ${token}` },
       });
+    } catch {
+      /* ignore network errors */
     }
-  }, []);
+  }, [state]);
 
   useEffect(() => {
     void (async () => {
@@ -394,6 +457,8 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
         if (a) {
           a.src = pathToFileUrl(saved.currentTrack.filePath);
           a.currentTime = saved.positionMs / 1000;
+          a.volume = volumeRef.current;
+          a.muted = mutedRef.current;
         }
       } else {
         startSpotifyPoll();
@@ -409,6 +474,7 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
     next,
     previous,
     setVolume,
+    toggleMute,
     setQueue,
   };
 

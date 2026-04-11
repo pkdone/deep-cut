@@ -275,6 +275,8 @@ export function registerIpcHandlers(params: {
       return {
         ...built,
         tracks: built.tracks.filter((t) => t.spotify !== undefined),
+        localArtists: [],
+        localAlbums: [],
       };
     }
     if (sourceFilter === 'local') {

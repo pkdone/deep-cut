@@ -18,111 +18,144 @@ export function SettingsPage(): React.ReactElement {
   }
 
   return (
-    <div>
+    <div className="settings-page">
       <h1>Settings</h1>
       <div className="panel">
-        <h2>MongoDB</h2>
+        <h2>Database</h2>
         <p>Status: {mongo}</p>
-        <p className="subtitle">Connection string comes from MONGODB_URI (e.g. .env.local).</p>
       </div>
       <div className="panel">
         <h2>Local music folders</h2>
-        <ul>
-          {s.localMusicFolders.map((f) => (
-            <li key={f}>{f}</li>
+        <ul className="folder-list">
+          {s.localMusicFolders.map((f, index) => (
+            <li key={`${f}::${index}`} className="folder-list-item">
+              <span className="folder-path">{f}</span>
+              <button
+                type="button"
+                className="icon-button"
+                aria-label={`Remove folder ${f}`}
+                onClick={() => {
+                  const next = {
+                    ...s,
+                    localMusicFolders: s.localMusicFolders.filter((_, i) => i !== index),
+                  };
+                  void window.deepcut.saveSettings(next).then(() => { setS(next); });
+                }}
+              >
+                −
+              </button>
+            </li>
           ))}
         </ul>
-        <button
-          type="button"
-          className="primary"
-          onClick={() => {
-            void window.deepcut.pickMusicFolder().then((p) => {
-              if (!p) {
-                return;
-              }
-              const next = { ...s, localMusicFolders: [...s.localMusicFolders, p] };
-              void window.deepcut.saveSettings(next).then(() => { setS(next); });
-            });
-          }}
-        >
-          Add folder
-        </button>
-        <button
-          type="button"
-          className="ghost"
-          onClick={() => {
-            void window.deepcut.rescanLibrary();
-          }}
-        >
-          Rescan library
-        </button>
+        <div className="settings-actions">
+          <button
+            type="button"
+            className="primary"
+            onClick={() => {
+              void window.deepcut.pickMusicFolder().then((p) => {
+                if (!p) {
+                  return;
+                }
+                const next = { ...s, localMusicFolders: [...s.localMusicFolders, p] };
+                void window.deepcut.saveSettings(next).then(() => { setS(next); });
+              });
+            }}
+          >
+            Add folder
+          </button>
+          <button
+            type="button"
+            className="ghost"
+            onClick={() => {
+              void window.deepcut.rescanLibrary();
+            }}
+          >
+            Rescan library
+          </button>
+        </div>
       </div>
       <div className="panel">
         <h2>Spotify API</h2>
-        <label>
-          Client ID
+        <div className="settings-field">
+          <label htmlFor="spotify-client-id">Client ID</label>
           <input
+            id="spotify-client-id"
+            autoComplete="off"
             value={s.spotifyClientId ?? ''}
             onChange={(e) => { setS({ ...s, spotifyClientId: e.target.value }); }}
           />
-        </label>
-        <label>
-          Client secret
+        </div>
+        <div className="settings-field">
+          <label htmlFor="spotify-client-secret">Client secret</label>
           <input
+            id="spotify-client-secret"
             type="password"
+            autoComplete="off"
             value={s.spotifyClientSecret ?? ''}
             onChange={(e) => { setS({ ...s, spotifyClientSecret: e.target.value }); }}
           />
-        </label>
-        <button
-          type="button"
-          className="primary"
-          onClick={() => void window.deepcut.saveSettings(s)}
-        >
-          Save Spotify credentials
-        </button>
-        <button
-          type="button"
-          className="primary"
-          onClick={() => void window.deepcut.spotifyStartLogin()}
-        >
-          Connect Spotify (browser OAuth)
-        </button>
-        <button type="button" className="ghost" onClick={() => void window.deepcut.spotifyLogout()}>
-          Disconnect session
-        </button>
+        </div>
+        <div className="settings-actions">
+          <button
+            type="button"
+            className="primary"
+            onClick={() => void window.deepcut.saveSettings(s)}
+          >
+            Save Spotify credentials
+          </button>
+          <button
+            type="button"
+            className="primary"
+            onClick={() => void window.deepcut.spotifyStartLogin()}
+          >
+            Connect Spotify (browser OAuth)
+          </button>
+          <button type="button" className="ghost" onClick={() => void window.deepcut.spotifyLogout()}>
+            Disconnect session
+          </button>
+        </div>
       </div>
       <div className="panel">
         <h2>LLM</h2>
-        <select
-          value={s.llmProvider}
-          onChange={(e) =>
-            { setS({ ...s, llmProvider: e.target.value as AppSettings['llmProvider'] }); }
-          }
-        >
-          <option value="none">None</option>
-          <option value="openai">OpenAI</option>
-          <option value="anthropic">Anthropic</option>
-        </select>
-        <label>
-          OpenAI API key
+        <div className="settings-field">
+          <label htmlFor="llm-provider">Provider</label>
+          <select
+            id="llm-provider"
+            value={s.llmProvider}
+            onChange={(e) =>
+              { setS({ ...s, llmProvider: e.target.value as AppSettings['llmProvider'] }); }
+            }
+          >
+            <option value="none">None</option>
+            <option value="openai">OpenAI</option>
+            <option value="anthropic">Anthropic</option>
+          </select>
+        </div>
+        <div className="settings-field">
+          <label htmlFor="openai-api-key">OpenAI API key</label>
           <input
+            id="openai-api-key"
             type="password"
+            autoComplete="off"
             value={s.openaiApiKey ?? ''}
             onChange={(e) => { setS({ ...s, openaiApiKey: e.target.value }); }}
           />
-        </label>
-        <label>
-          Anthropic API key
+        </div>
+        <div className="settings-field">
+          <label htmlFor="anthropic-api-key">Anthropic API key</label>
           <input
+            id="anthropic-api-key"
             type="password"
+            autoComplete="off"
             value={s.anthropicApiKey ?? ''}
             onChange={(e) => { setS({ ...s, anthropicApiKey: e.target.value }); }}
           />
-        </label>
-        <button type="button" className="primary" onClick={() => void window.deepcut.saveSettings(s)}>
-          Save LLM settings
-        </button>
+        </div>
+        <div className="settings-actions">
+          <button type="button" className="primary" onClick={() => void window.deepcut.saveSettings(s)}>
+            Save LLM settings
+          </button>
+        </div>
       </div>
     </div>
   );
