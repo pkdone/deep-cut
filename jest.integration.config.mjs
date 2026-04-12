@@ -6,6 +6,6 @@ export default {
   moduleNameMapper: {
     '^(\\.{1,2}/.*)\\.js$': '$1',
   },
-  testMatch: ['**/src/test/**/*.test.ts'],
-  testPathIgnorePatterns: ['/node_modules/', '\\.int\\.test\\.ts$'],
+  testMatch: ['**/src/test/integration/**/*.int.test.ts'],
+  setupFilesAfterEnv: ['<rootDir>/src/test/integration/jest-integration-setup.ts'],
 };

@@ -577,22 +577,17 @@ export function registerIpcHandlers(params: {
     if (!key) {
       throw new ConfigurationError('Missing LLM API key for selected provider.');
     }
-    const run = async (): Promise<void> => {
-      const entry = await fetchArtistEnrichment({
-        provider: s.llmProvider,
-        apiKey: key,
-        enrichmentArtistKey: parsed.data.enrichmentArtistKey,
-        artistDisplayName: parsed.data.artistName,
-      });
-      await enrichRepo.upsert(entry);
-    };
-
-    try {
-      await run();
-    } catch (e) {
-      logWarn('Enrichment retry', { e: String(e) });
-      await run();
-    }
+    const entry = await fetchArtistEnrichment({
+      provider: s.llmProvider,
+      apiKey: key,
+      enrichmentArtistKey: parsed.data.enrichmentArtistKey,
+      artistDisplayName: parsed.data.artistName,
+    });
+    await enrichRepo.upsert(entry);
+    logInfo('Artist enrichment refreshed', {
+      enrichmentArtistKey: parsed.data.enrichmentArtistKey,
+      provider: s.llmProvider,
+    });
 
     const cached = await enrichRepo.get(parsed.data.enrichmentArtistKey);
     return { ok: true as const, cached };

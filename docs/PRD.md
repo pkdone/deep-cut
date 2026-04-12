@@ -596,7 +596,7 @@ It must provide insight for the **primary artist of the track currently playing*
 ### 13.2 Mandatory Now Playing Insight Content in v1
 
 The Now Playing experience must include, for that primary artist:
-- an **artist synopsis**: an opening paragraph of **6 to 8** fairly substantial sentences, **LLM-synthesized** from general knowledge (not copied from a fixed external feed)
+- an **artist synopsis**: an opening paragraph of **6 to 8** fairly substantial sentences, **LLM-synthesized** and **grounded in retrieved web evidence** (via the selected provider’s search/tooling capabilities), then shaped into strict JSON—not copied verbatim from a single third-party feed
 - **ranked albums**: a model-ranked list of notable **studio or canonical albums** (name, release year, rank)
 - **top 10 tracks**: exactly **ten** ranked tracks (title, rank 1–10; **release year** included in the UI when provided)
 - up to **three** entries each (only sections that apply), with **album or compilation title** and **release year** shown in the UI (e.g. title with year in brackets):
@@ -605,7 +605,7 @@ The Now Playing experience must include, for that primary artist:
   - **rarities compilations** (e.g. B-sides, outtakes, rarities-focused releases)
 - a **list of people** who have been part of that act (**most significant first**), each with **instruments** and **tenure** as one or more year ranges in the UI (including **boomerang** members with multiple ranges); members are **not** presented as a ranked list
 
-Enrichment is keyed by a **stable normalized identity** derived from the **primary artist name** for the current track (same string the playback UI uses for the artist line). The app does **not** supply third-party catalog feeds to the LLM; lists and classifications are **model-generated** and may be incomplete or inaccurate (see §13.7 posture elsewhere). For **Spotify-sourced** tracks, the primary artist name comes from **playback metadata** (the same source as the Now Playing bar), not from a separate enrichment-specific catalog call when avoidable.
+Enrichment is keyed by a **stable normalized identity** derived from the **primary artist name** for the current track (same string the playback UI uses for the artist line). **Spotify-streamed** and **local MP3** tracks use the **same** enrichment pipeline: identity comes from **playback-consistent metadata** (Spotify playback metadata vs **local file tags** for local tracks). **Now Playing insight lists** (synopsis, rankings, discography-style lists) are **not** sourced from Spotify Web API catalog endpoints; they come from **web retrieval + LLM synthesis** (and cache). Lists may still be incomplete or inaccurate (see §13.7 posture elsewhere). Browsing the Spotify catalog on other screens is unrelated to this sourcing rule.
 
 ### 13.3 Generation Model
 
@@ -629,14 +629,17 @@ For v1, the product does **not** specify fixed **token or cost limits** per enri
 LLM output must be:
 - **strict JSON-shaped**
 
+Implementation may use provider **structured JSON** or **schema-constrained** responses where supported; the app still validates with **Zod** before cache and UI.
+
 The prompt sent by the app must include:
 - the **JSON schema** expected in the response
 
 ### 13.6 Source Selection for Enrichment
 
 For v1:
-- enrichment content is **LLM-synthesized** from the **artist name** and the expected JSON shape; the app does **not** inject Spotify (or other) catalog dumps into the prompt
-- the prompt may describe the information the model is expected to produce (synopsis length and tone, ranked albums, top 10 tracks, categorized compilation lists, band members and instruments)
+- the app runs a **retrieval stage** (provider web search / tools) to gather **evidence**, then a **synthesis stage** that produces strict JSON **using that evidence** (not a single monolithic “search and answer” prompt)
+- the app does **not** inject **Spotify Web API** catalog dumps into the LLM for Now Playing insights; **local MP3** and **Spotify** playback use the same pipeline
+- the synthesis prompt may describe the information the model is expected to produce (synopsis length and tone, ranked albums, top 10 tracks, categorized compilation lists, band members and instruments)
 
 ### 13.7 Provenance
 

@@ -11,6 +11,7 @@
     "preview": "electron-vite preview",
     "lint": "eslint .",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test:integration": "node --experimental-vm-modules node_modules/jest/bin/jest.js --config jest.integration.config.mjs",
     "validate": "npm run lint && npm run test && npm run build:app",
     "db:init": "tsx scripts/db-init.ts",
     "db:teardown": "tsx scripts/db-teardown.ts"
