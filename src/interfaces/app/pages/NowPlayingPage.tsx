@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState, type ReactElement } from 'react';
-import type {
-  ArtistEnrichmentCache,
-  BandMemberTenurePeriod,
-} from '../../../domain/schemas/artist-enrichment.js';
+import type { ArtistEnrichmentCache } from '../../../domain/schemas/artist-enrichment.js';
+import type { BandMemberTenurePeriod } from '../../../domain/schemas/artist-enrichment.js';
 import type { TrackRef } from '../../../domain/schemas/track-ref.js';
+import {
+  artistInsightsBodyForUi,
+  artistInsightsWarningsForUi,
+} from '../../../domain/services/artist-insights-for-ui.js';
 import { usePlayback } from '../playback/PlaybackProvider.js';
 
 function resolvePlaybackPayload(
@@ -177,6 +179,9 @@ export function NowPlayingPage(): ReactElement {
       ? pb.primaryArtistDisplayName
       : 'Artist');
 
+  const insightBody = enrich !== null ? artistInsightsBodyForUi(enrich) : null;
+  const insightWarnings = enrich !== null ? artistInsightsWarningsForUi(enrich) : [];
+
   return (
     <div>
       {cur === null ? <p className="subtitle">Nothing playing.</p> : null}
@@ -231,14 +236,25 @@ export function NowPlayingPage(): ReactElement {
           ) : null}
           {enrichErr !== null ? <p className="error-text">{enrichErr}</p> : null}
 
-          {enrich !== null && !loadingInsight && resolutionError === null ? (
+          {enrich !== null &&
+          insightBody !== null &&
+          !loadingInsight &&
+          resolutionError === null ? (
             <>
-              <p className="np-insights-synopsis">{enrich.payload.synopsis}</p>
-              {enrich.payload.topTracks.length > 0 ? (
+              {insightWarnings.length > 0 ? (
+                <p className="subtitle np-insights-warnings" role="status">
+                  {enrich.validationStatus === 'partial'
+                    ? 'Partial insights (generated content may be incomplete). '
+                    : null}
+                  {insightWarnings.join(' ')}
+                </p>
+              ) : null}
+              <p className="np-insights-synopsis">{insightBody.synopsis}</p>
+              {insightBody.topTracks.length > 0 ? (
                 <>
                   <h3>Ranked Top Tracks</h3>
                   <ol className="np-ranked-list">
-                    {[...enrich.payload.topTracks]
+                    {[...insightBody.topTracks]
                       .sort((a, b) => a.rank - b.rank)
                       .map((t) => (
                         <li key={`track-${String(t.rank)}-${t.title}`} value={t.rank}>
@@ -249,11 +265,11 @@ export function NowPlayingPage(): ReactElement {
                   </ol>
                 </>
               ) : null}
-              {enrich.payload.rankedAlbums.length > 0 ? (
+              {insightBody.rankedAlbums.length > 0 ? (
                 <>
                   <h3>Ranked Studio Albums</h3>
                   <ol className="np-ranked-list">
-                    {[...enrich.payload.rankedAlbums]
+                    {[...insightBody.rankedAlbums]
                       .sort((a, b) => a.rank - b.rank)
                       .map((al) => (
                         <li key={`ranked-${String(al.rank)}-${al.name}`} value={al.rank}>
@@ -263,18 +279,18 @@ export function NowPlayingPage(): ReactElement {
                   </ol>
                 </>
               ) : null}
-              {enrich.payload.liveAlbums.length === 0 &&
-              enrich.payload.bestOfCompilations.length === 0 &&
-              enrich.payload.raritiesCompilations.length === 0 ? (
+              {insightBody.liveAlbums.length === 0 &&
+              insightBody.bestOfCompilations.length === 0 &&
+              insightBody.raritiesCompilations.length === 0 ? (
                 <p className="subtitle np-insights-empty-categories">
                   No live, best-of, or rarities releases were listed in this summary. Use refresh to regenerate with the latest prompt.
                 </p>
               ) : null}
-              {enrich.payload.liveAlbums.length > 0 ? (
+              {insightBody.liveAlbums.length > 0 ? (
                 <>
                   <h3>Ranked Live Albums</h3>
                   <ol className="np-ranked-list">
-                    {[...enrich.payload.liveAlbums]
+                    {[...insightBody.liveAlbums]
                       .sort((a, b) => a.rank - b.rank)
                       .map((al) => (
                         <li key={`live-${String(al.rank)}-${al.name}`} value={al.rank}>
@@ -284,11 +300,11 @@ export function NowPlayingPage(): ReactElement {
                   </ol>
                 </>
               ) : null}
-              {enrich.payload.bestOfCompilations.length > 0 ? (
+              {insightBody.bestOfCompilations.length > 0 ? (
                 <>
                   <h3>Ranked Best-Of Compilations</h3>
                   <ol className="np-ranked-list">
-                    {[...enrich.payload.bestOfCompilations]
+                    {[...insightBody.bestOfCompilations]
                       .sort((a, b) => a.rank - b.rank)
                       .map((al) => (
                         <li key={`best-${String(al.rank)}-${al.name}`} value={al.rank}>
@@ -298,11 +314,11 @@ export function NowPlayingPage(): ReactElement {
                   </ol>
                 </>
               ) : null}
-              {enrich.payload.raritiesCompilations.length > 0 ? (
+              {insightBody.raritiesCompilations.length > 0 ? (
                 <>
                   <h3>Ranked Rarities Compilations</h3>
                   <ol className="np-ranked-list">
-                    {[...enrich.payload.raritiesCompilations]
+                    {[...insightBody.raritiesCompilations]
                       .sort((a, b) => a.rank - b.rank)
                       .map((al) => (
                         <li key={`rarities-${String(al.rank)}-${al.name}`} value={al.rank}>
@@ -312,11 +328,11 @@ export function NowPlayingPage(): ReactElement {
                   </ol>
                 </>
               ) : null}
-              {enrich.payload.bandMembers.length > 0 ? (
+              {insightBody.bandMembers.length > 0 ? (
                 <>
                   <h3>Band Members</h3>
                   <ul className="np-band-members-list">
-                    {enrich.payload.bandMembers.map((m, idx) => (
+                    {insightBody.bandMembers.map((m, idx) => (
                       <li key={`member-${String(idx)}-${m.name}`}>
                         <strong>{m.name}</strong>
                         <span className="np-band-tenure"> ({formatBandMemberTenure(m.periods)})</span>

@@ -1,7 +1,7 @@
 import { ExternalServiceError } from '../../shared/errors.js';
 import { ANTHROPIC_MESSAGES_MODEL } from './anthropic-messages-model.js';
 
-/** Same model family as artist enrichment ([`fetch-artist-enrichment`](./fetch-artist-enrichment.ts)). */
+/** Same model family as grounded enrichment synthesis ([`fetch-artist-enrichment`](./fetch-artist-enrichment.ts)). */
 const OPENAI_PING_MODEL = 'gpt-4.1-mini';
 
 /**

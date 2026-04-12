@@ -23,7 +23,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['src/test/**/*.test.ts'],
+    files: ['src/test/**/*.test.ts', 'src/test/**/*.int.test.ts'],
     languageOptions: {
       globals: { ...globals.jest },
     },
@@ -103,6 +103,7 @@ export default tseslint.config(
       'coverage/**',
       'eslint.config.mjs',
       'jest.config.mjs',
+      'jest.integration.config.mjs',
     ],
   }
 );

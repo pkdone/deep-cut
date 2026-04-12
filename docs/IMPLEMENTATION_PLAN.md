@@ -104,7 +104,7 @@ Aligned with **`docs/PRD.md`** §3, §14, §22. Summary:
 | **Search** | Unified, **grouped by type**, source badges, source filter, **merged duplicates** (fuzzy), default play source Spotify when available; **debounce + per-section caps** (tune in implementation) |
 | **Playback** | In-app preferred; cross-source handoff acceptable; failure → local fuzzy fallback → error → skip |
 | **Playlists** | CRUD, reorder, mixed sources, persist |
-| **Artist intelligence** | LLM-only synthesis from **primary artist name** (no catalog injection), strict JSON (synopsis **6–8** sentences; **ranked albums**; **10 top tracks**; up to **3** live / **3** best-of / **3** rarities with **years**; **band members** with instruments), **30-day cache** keyed by **normalized artist key**, **Now Playing** UI, pass-through artist name from playback metadata, manual refresh, retry once, partial render on failure |
+| **Artist intelligence** | **Grounded pipeline**: provider **web retrieval** (OpenAI Responses + `web_search`, Anthropic **web search** tool) → normalize evidence → **synthesis** to strict JSON → **Zod** validation → **MongoDB** cache; **Spotify API not used** for Now Playing insight lists; **local + Spotify** share the same pipeline; synopsis **6–8** sentences; **ranked albums**; **10 top tracks**; up to **3** live / **3** best-of / **3** rarities with **years**; **band members**; **30-day cache** by **normalized artist key**, **Now Playing** UI, manual refresh, **synthesis retry once** on invalid output, partial render + warnings when applicable |
 | **Offline** | Local library + local playback + **cached** enrichment |
 | **Settings** | Folders, Spotify, LLM, MongoDB status, cache, basic prefs |
 | **Theme** | Dark only |
@@ -125,7 +125,7 @@ Suggested order (from PRD §25, refined):
 5. **Spotify**: **browser OAuth on each cold start**, search API, metadata; attempt **in-app playback**; failure behaviour per PRD; Settings status.
 6. **Unified search + merge**: grouped results, filters, fuzzy duplicate merge, Spotify-preferred play on merged rows; **Spotify-primary title** with optional **subtitle** for differing local metadata.
 7. **Playlists**: app playlists in MongoDB, mixed playback, reorder/remove.
-8. **Artist enrichment**: LLM adapters (OpenAI, Anthropic), JSON schema validation, cache + refresh on **Now Playing**, offline cached read. **Persistence:** Zod-validated documents in Mongo; **`db:init`** today only ensures the collection + **unique index** on `enrichmentArtistKey` (no server-side JSON Schema on the payload body). **Breaking payload / `docSchemaVersion` changes:** no migration script in-repo; reset dev DB with **`db:teardown`** then **`db:init`**, or drop incompatible cache documents, before relying on the new shape.
+8. **Artist enrichment**: Grounded **retrieval + synthesis** adapters (OpenAI Responses + web search, Anthropic Messages + web search); domain split (`ArtistEvidenceBundle`, **`ArtistInsightsRecord`** persisted aggregate with validation status + warnings); JSON validation, cache + refresh on **Now Playing**, offline cached read. **Persistence:** Zod-validated documents in Mongo; **`db:init`** ensures the collection + **unique index** on `enrichmentArtistKey` (no server-side JSON Schema on the payload body yet). **Breaking payload / `docSchemaVersion` changes:** no migration script in-repo; reset dev DB with **`db:teardown`** then **`db:init`**, or drop incompatible cache documents, before relying on the new shape. **Optional live integration tests:** `npm run test:integration` (loads `.env.local` via Jest setup); set **`OPENAI_API_KEY`** / **`ANTHROPIC_API_KEY`** there; **`npm test`** stays keyless and excludes `*.int.test.ts`.
 9. **Hardening**: media keys, **fixed-default** global shortcuts, local logs, `.deb`, E2E suite for PRD flows.
 
 Dependencies: 3 before 4; 5 before 6–7; 8 can overlap 5+ after cache/settings exist. **Exact parallelisation** is flexible; keep slices **vertically shippable** where possible.
@@ -141,9 +141,9 @@ Illustrative—not exhaustive. Names will evolve with ubiquitous language.
 | **Config** | `package.json`, `tsconfig.json`, `eslint.config.mjs`, `jest.config.ts`, `.env.example` |
 | **Electron** | `src/interfaces/electron-main/main.ts`, `window-manager.ts`, `ipc/register-handlers.ts`, `preload.ts` |
 | **UI** | `src/interfaces/app/` React roots, routes, screens (`home`, `search`, `artist`, `album`, `playlist`, `now-playing`, `settings`) |
-| **Domain** | `schemas/track.ts`, `playlist.ts`, `playback-session.ts`, `artist-enrichment.ts`, `repositories/*.ts` |
-| **Application** | `search-unified.ts`, `manage-playlist.ts`, `restore-session.ts`, `enrich-artist.ts` |
-| **Infrastructure** | `persistence/*-repository.ts`, `spotify/client.ts`, `llm/openai.ts`, `llm/anthropic.ts`, `local-library/scanner.ts`, `local-library/watcher.ts` |
+| **Domain** | `schemas/track.ts`, `playlist.ts`, `playback-session.ts`, `artist-enrichment-payload.ts`, `artist-insights-record.ts`, `artist-evidence.ts`, `artist-enrichment.ts` (re-exports), `repositories/*.ts`, `services/artist-insights-for-ui.ts` |
+| **Application** | `search-unified.ts`, `manage-playlist.ts`, `restore-session.ts`, `enrichment-cache-policy.ts` |
+| **Infrastructure** | `persistence/*-repository.ts`, `parse-artist-insights-document.ts`, `spotify/client.ts`, `llm/fetch-artist-enrichment.ts`, `llm/grounded/*`, `local-library/scanner.ts`, `local-library/watcher.ts` |
 | **DB** | `scripts/db-init.ts`, `scripts/db-teardown.ts`, `infrastructure/persistence/init-mongo-database.ts` |
 | **Tests** | `src/test/unit/domain/services/fuzzy-match.test.ts`, `src/test/unit/infrastructure/llm/enrichment-parse.test.ts`, `src/test/integration/persistence/*.int.test.ts`, `src/test/e2e/*.spec.ts` |
 | **Packaging** | `electron-builder.yml` (or equivalent), `.desktop` file, icons under `resources/` |
@@ -181,7 +181,7 @@ Illustrative—not exhaustive. Names will evolve with ubiquitous language.
 |-------|-------------|---------|
 | **CI default** | `npm run validate` (aggregate: lint, test, build—as defined in `package.json` when added) | Gate merges; matches project rule |
 | **Unit** | Fuzzy matching, enrichment JSON parsing/validation, cache TTL logic, pure domain services | Fast feedback, high-risk logic |
-| **Integration** | MongoDB repositories with test DB (`db:init` in fixture), Spotify/LLM **contract tests** with mocked HTTP | Persistence and adapter correctness |
+| **Integration** | MongoDB repositories with test DB (`db:init` in fixture), Spotify/LLM **contract tests** with mocked HTTP; **optional** `npm run test:integration` for live LLM retrieval (keys in `.env.local`; see `.env.example`) | Persistence and adapter correctness |
 | **E2E** | Playwright (or chosen): connect Spotify (or stub), scan folder, search/play, playlist CRUD, **Now Playing** artist intelligence (enrichment) while playing | PRD §20.2 flows |
 | **Manual** | Ubuntu 24.04+: `.deb` install, media keys, offline aeroplane mode for local+cache | Packaging and desktop integration |
 
