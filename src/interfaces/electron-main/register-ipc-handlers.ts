@@ -19,16 +19,19 @@ import {
   fetchSpotifySearchUrl,
   getArtistAlbums,
   getArtistTopTracks,
+  getSpotifyTrackPrimaryArtist,
   spotifySearch,
   type SpotifySearchApiEntityType,
 } from '../../infrastructure/spotify/spotify-api.js';
 import { startSpotifyAuthorization } from '../../infrastructure/spotify/spotify-oauth.js';
 import { logError, logInfo, logWarn } from '../../shared/app-logger.js';
+import { normalizeArtistNameForEnrichmentKey } from '../../shared/normalize-artist-name-for-enrichment-key.js';
 import { ConfigurationError, ExternalServiceError, ValidationError } from '../../shared/errors.js';
 import {
   IPC_CHANNELS,
   addTrackToPlaylistPayload,
   artistEnrichmentPayload,
+  resolvePlaybackArtistForEnrichmentPayload,
   savePlaybackPayload,
   savePlaylistPayload,
   saveSettingsPayload,
@@ -56,6 +59,21 @@ function defaultSettings(): AppSettings {
     localMusicFolders: [],
     llmProvider: 'none',
   };
+}
+
+/** User-facing message for status UI; never includes connection string contents. */
+function formatMongoPingError(e: unknown): string {
+  if (e instanceof ConfigurationError) {
+    return e.message;
+  }
+  if (e instanceof Error) {
+    const m = e.message;
+    if (/mongodb(\+srv)?:\/\//i.test(m) || /MONGODB_URI/i.test(m)) {
+      return 'Could not connect to MongoDB. Check MONGODB_URI, network access, and run db:init if collections are missing.';
+    }
+    return m.length > 280 ? `${m.slice(0, 280)}…` : m;
+  }
+  return 'MongoDB connection failed.';
 }
 
 export function registerIpcHandlers(params: {
@@ -144,11 +162,19 @@ export function registerIpcHandlers(params: {
     }
   };
 
-  ipcMain.handle(IPC_CHANNELS.mongoPing, async () => {
-    const uri = getMongoUri();
-    const client = await getMongoClient(uri);
-    await client.db().command({ ping: 1 });
-    return { ok: true as const };
+  ipcMain.handle(IPC_CHANNELS.mongoPing, async (): Promise<
+    { ok: true } | { ok: false; message: string }
+  > => {
+    try {
+      const uri = getMongoUri();
+      const client = await getMongoClient(uri);
+      await client.db().command({ ping: 1 });
+      return { ok: true };
+    } catch (e) {
+      const message = formatMongoPingError(e);
+      logError('mongoPing failed', { message });
+      return { ok: false, message };
+    }
   });
 
   ipcMain.handle(IPC_CHANNELS.getSettings, async () => {
@@ -218,8 +244,18 @@ export function registerIpcHandlers(params: {
     const settingsRepo = new MongoAppSettingsRepository(
       db.collection(MongoAppSettingsRepository.collectionName)
     );
+    const prev = await settingsRepo.get();
     await settingsRepo.save(parsed.data);
     await setupWatch(parsed.data.localMusicFolders);
+    const prevFolders = prev?.localMusicFolders ?? [];
+    const nextFolders = parsed.data.localMusicFolders;
+    const foldersChanged =
+      JSON.stringify([...prevFolders].sort()) !== JSON.stringify([...nextFolders].sort());
+    if (foldersChanged) {
+      void rescanAllFolders().catch((e: unknown) => {
+        logError('Library rescan after settings save failed', { e: String(e) });
+      });
+    }
     return { ok: true as const };
   });
 
@@ -508,7 +544,7 @@ export function registerIpcHandlers(params: {
     const repo = new MongoArtistEnrichmentRepository(
       db.collection(MongoArtistEnrichmentRepository.collectionName)
     );
-    const cached = await repo.get(parsed.data.spotifyArtistId);
+    const cached = await repo.get(parsed.data.enrichmentArtistKey);
     if (!cached) {
       return { kind: 'miss' as const };
     }
@@ -541,18 +577,12 @@ export function registerIpcHandlers(params: {
     if (!key) {
       throw new ConfigurationError('Missing LLM API key for selected provider.');
     }
-    const tokenForEnrich = spotifyAccessToken;
-    if (!tokenForEnrich || Date.now() >= spotifyExpiresAtMs - 60_000) {
-      throw new ConfigurationError('Spotify not connected; connect before enriching.');
-    }
-
     const run = async (): Promise<void> => {
       const entry = await fetchArtistEnrichment({
         provider: s.llmProvider,
         apiKey: key,
-        accessToken: tokenForEnrich,
-        spotifyArtistId: parsed.data.spotifyArtistId,
-        artistName: parsed.data.artistName,
+        enrichmentArtistKey: parsed.data.enrichmentArtistKey,
+        artistDisplayName: parsed.data.artistName,
       });
       await enrichRepo.upsert(entry);
     };
@@ -564,8 +594,105 @@ export function registerIpcHandlers(params: {
       await run();
     }
 
-    const cached = await enrichRepo.get(parsed.data.spotifyArtistId);
+    const cached = await enrichRepo.get(parsed.data.enrichmentArtistKey);
     return { ok: true as const, cached };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.resolvePlaybackArtistForEnrichment, async (_e, raw: unknown) => {
+    const parsed = resolvePlaybackArtistForEnrichmentPayload.safeParse(raw);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid playback artist payload');
+    }
+    const { trackRef, primaryArtistDisplayName } = parsed.data;
+    if (trackRef.source === 'local') {
+      const uri = getMongoUri();
+      const client = await getMongoClient(uri);
+      const db = client.db();
+      const localRepo = new MongoLocalTrackRepository(
+        db.collection(MongoLocalTrackRepository.collectionName)
+      );
+      const track = await localRepo.findByLocalTrackId(trackRef.localTrackId);
+      if (track === null) {
+        return {
+          kind: 'error' as const,
+          reason: 'local_track_not_found' as const,
+          message: 'Local track not found in library index.',
+        };
+      }
+      const display = track.artist.trim();
+      if (display === '') {
+        return {
+          kind: 'error' as const,
+          reason: 'missing_artist_name' as const,
+          message: 'No artist name in file metadata.',
+        };
+      }
+      const enrichmentArtistKey = normalizeArtistNameForEnrichmentKey(display);
+      if (enrichmentArtistKey === '') {
+        return {
+          kind: 'error' as const,
+          reason: 'missing_artist_name' as const,
+          message: 'No artist name in file metadata.',
+        };
+      }
+      return {
+        kind: 'ok' as const,
+        enrichmentArtistKey,
+        displayName: display,
+        via: 'local_library_tags' as const,
+      };
+    }
+
+    const fromUi = primaryArtistDisplayName?.trim() ?? '';
+    if (fromUi !== '') {
+      const enrichmentArtistKey = normalizeArtistNameForEnrichmentKey(fromUi);
+      if (enrichmentArtistKey === '') {
+        return {
+          kind: 'error' as const,
+          reason: 'missing_artist_name' as const,
+          message: 'No primary artist name for this track.',
+        };
+      }
+      return {
+        kind: 'ok' as const,
+        enrichmentArtistKey,
+        displayName: fromUi,
+        via: 'spotify_playback_metadata' as const,
+      };
+    }
+
+    const token = spotifyAccessToken;
+    if (!token || Date.now() >= spotifyExpiresAtMs - 60_000) {
+      return {
+        kind: 'error' as const,
+        reason: 'spotify_metadata_unavailable' as const,
+        message: 'Could not determine artist: connect Spotify or open Now Playing until track info loads.',
+      };
+    }
+    try {
+      const a = await getSpotifyTrackPrimaryArtist(token, trackRef.spotifyId);
+      const display = a.name.trim();
+      if (display === '') {
+        return {
+          kind: 'error' as const,
+          reason: 'missing_artist_name' as const,
+          message: 'No primary artist name for this track.',
+        };
+      }
+      const enrichmentArtistKey = normalizeArtistNameForEnrichmentKey(display);
+      return {
+        kind: 'ok' as const,
+        enrichmentArtistKey,
+        displayName: display,
+        via: 'spotify_playback_metadata' as const,
+      };
+    } catch {
+      return {
+        kind: 'error' as const,
+        reason: 'spotify_metadata_unavailable' as const,
+        message: 'Could not load track metadata from Spotify.',
+      };
+    }
   });
 
   void (async () => {

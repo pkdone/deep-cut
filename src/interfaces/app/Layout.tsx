@@ -13,9 +13,9 @@ export function Layout({ children }: { readonly children: ReactNode }): React.Re
           <NavLink to="/" end>
             Home
           </NavLink>
+          <NavLink to="/now-playing">Now Playing</NavLink>
           <NavLink to="/search">Search</NavLink>
           <NavLink to="/settings">Settings</NavLink>
-          <NavLink to="/now-playing">Now Playing</NavLink>
         </div>
       </nav>
       <main className="page">{children}</main>

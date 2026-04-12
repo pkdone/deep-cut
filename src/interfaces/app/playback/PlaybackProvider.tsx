@@ -7,8 +7,22 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import type { LocalTrack } from '../../../domain/schemas/local-track.js';
 import type { PlaybackContext as PbCtx, PlaybackSession } from '../../../domain/schemas/playback-session.js';
 import type { TrackRef } from '../../../domain/schemas/track-ref.js';
+
+function spotifyArtistLine(j: { artists?: { name?: string }[] }): string {
+  const names = j.artists?.map((a) => a.name).filter((n): n is string => Boolean(n)) ?? [];
+  return names.join(', ');
+}
+
+function basenameFromPath(p: string): string {
+  const norm = p.replaceAll('\\', '/');
+  const i = norm.lastIndexOf('/');
+  const base = i >= 0 ? norm.slice(i + 1) : norm;
+  const dot = base.lastIndexOf('.');
+  return dot > 0 ? base.slice(0, dot) : base;
+}
 
 interface PlaybackState {
   current: TrackRef | null;
@@ -24,6 +38,12 @@ interface PlaybackState {
 }
 
 interface PlaybackApi extends PlaybackState {
+  /** Track title for the Now Playing bar; `null` while loading metadata for the current track. */
+  nowPlayingTrackTitle: string | null;
+  /** Album name when known from tags (local) or Spotify track metadata. */
+  nowPlayingAlbumName: string | null;
+  /** Primary artist line for the current track (same source as the Now Playing bar). */
+  primaryArtistDisplayName: string | null;
   playRef: (ref: TrackRef, ctx?: PbCtx) => Promise<void>;
   togglePlay: () => Promise<void>;
   seek: (ms: number) => Promise<void>;
@@ -63,6 +83,91 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
     context: { kind: 'none' },
     error: null,
   });
+
+  const [primaryArtistDisplayName, setPrimaryArtistDisplayName] = useState<string | null>(null);
+  const [nowPlayingTrackTitle, setNowPlayingTrackTitle] = useState<string | null>(null);
+  const [nowPlayingAlbumName, setNowPlayingAlbumName] = useState<string | null>(null);
+
+  const currentTrack = state.current;
+
+  useEffect(() => {
+    const cur = currentTrack;
+    if (cur === null) {
+      setPrimaryArtistDisplayName(null);
+      setNowPlayingTrackTitle(null);
+      setNowPlayingAlbumName(null);
+      return undefined;
+    }
+    if (cur.source === 'local') {
+      setPrimaryArtistDisplayName(null);
+      setNowPlayingTrackTitle(null);
+      setNowPlayingAlbumName(null);
+      let cancelled = false;
+      void window.deepcut.getLocalTracks().then((raw) => {
+        if (cancelled) {
+          return;
+        }
+        const tracks = raw as LocalTrack[];
+        const t = tracks.find((x) => x.localTrackId === cur.localTrackId);
+        if (t === undefined) {
+          setPrimaryArtistDisplayName(null);
+          setNowPlayingTrackTitle(basenameFromPath(cur.filePath));
+          setNowPlayingAlbumName(null);
+          return;
+        }
+        setNowPlayingTrackTitle(t.title);
+        const a = t.artist.trim();
+        setPrimaryArtistDisplayName(a !== '' ? a : null);
+        const alb = t.album.trim();
+        setNowPlayingAlbumName(alb !== '' ? alb : null);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+    setPrimaryArtistDisplayName(null);
+    setNowPlayingTrackTitle(null);
+    setNowPlayingAlbumName(null);
+    const ac = new AbortController();
+    void (async () => {
+      const token = await window.deepcut.getSpotifyAccessToken();
+      if (!token || ac.signal.aborted) {
+        setPrimaryArtistDisplayName(null);
+        setNowPlayingTrackTitle('Spotify');
+        setNowPlayingAlbumName(null);
+        return;
+      }
+      try {
+        const res = await fetch(
+          `https://api.spotify.com/v1/tracks/${encodeURIComponent(cur.spotifyId)}`,
+          { headers: { Authorization: `Bearer ${token}` }, signal: ac.signal }
+        );
+        if (!res.ok) {
+          setPrimaryArtistDisplayName(null);
+          setNowPlayingTrackTitle('Spotify');
+          setNowPlayingAlbumName(null);
+          return;
+        }
+        const j = (await res.json()) as {
+          name?: string;
+          artists?: { name?: string }[];
+          album?: { name?: string };
+        };
+        const line = spotifyArtistLine(j);
+        setNowPlayingTrackTitle(j.name ?? 'Spotify');
+        setPrimaryArtistDisplayName(line !== '' ? line : null);
+        const albumName = j.album?.name?.trim();
+        setNowPlayingAlbumName(albumName !== undefined && albumName !== '' ? albumName : null);
+      } catch {
+        setPrimaryArtistDisplayName(null);
+        setNowPlayingTrackTitle('Spotify');
+        setNowPlayingAlbumName(null);
+      }
+    })();
+    return () => {
+      ac.abort();
+    };
+  }, [currentTrack]);
 
   useEffect(() => {
     volumeRef.current = state.volume;
@@ -468,6 +573,9 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
 
   const api: PlaybackApi = {
     ...state,
+    nowPlayingTrackTitle,
+    nowPlayingAlbumName,
+    primaryArtistDisplayName,
     playRef,
     togglePlay,
     seek,

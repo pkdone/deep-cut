@@ -14,6 +14,11 @@ export class MongoLocalTrackRepository implements LocalTrackRepository {
     return docs.map((d) => localTrackSchema.parse(d));
   }
 
+  async findByLocalTrackId(localTrackId: string): Promise<LocalTrack | null> {
+    const doc = await this.coll.findOne({ localTrackId });
+    return doc !== null ? localTrackSchema.parse(doc) : null;
+  }
+
   async upsertMany(tracks: readonly LocalTrack[]): Promise<void> {
     for (const t of tracks) {
       const existing = await this.coll.findOne({ filePath: t.filePath });

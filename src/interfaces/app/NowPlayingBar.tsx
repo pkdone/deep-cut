@@ -1,22 +1,14 @@
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { AppSettings } from '../../domain/schemas/app-settings.js';
-import type { LocalTrack } from '../../domain/schemas/local-track.js';
 import {
   getLlmIntegrationWarning,
   getLocalFoldersWarning,
   getSpotifyIntegrationWarning,
 } from '../../shared/integration-status-messages.js';
+import { INTEGRATION_STATUS_REFRESH_EVENT } from './integration-status-events.js';
 import { LLM_PING_UPDATED_EVENT } from './llm-ping-events.js';
 import { usePlayback } from './playback/PlaybackProvider.js';
-
-function basenameFromPath(p: string): string {
-  const norm = p.replaceAll('\\', '/');
-  const i = norm.lastIndexOf('/');
-  const base = i >= 0 ? norm.slice(i + 1) : norm;
-  const dot = base.lastIndexOf('.');
-  return dot > 0 ? base.slice(0, dot) : base;
-}
 
 function SpeakerIcon(): ReactElement {
   return (
@@ -93,12 +85,9 @@ function IconSpinner(): ReactElement {
   );
 }
 
-function spotifyArtistLine(j: { artists?: { name?: string }[] }): string {
-  const names = j.artists?.map((a) => a.name).filter((n): n is string => Boolean(n)) ?? [];
-  return names.join(', ');
-}
-
 type LlmPingState = { ok: boolean; message: string | null } | null;
+
+type MongoDbStatus = null | { ok: true } | { ok: false; message: string };
 
 function IntegrationStatusStrip(): ReactElement {
   const navigate = useNavigate();
@@ -108,17 +97,20 @@ function IntegrationStatusStrip(): ReactElement {
   );
   const [libraryScanning, setLibraryScanning] = useState(false);
   const [llmPing, setLlmPing] = useState<LlmPingState>(null);
+  const [mongoDb, setMongoDb] = useState<MongoDbStatus>(null);
   const initialLlmPingDone = useRef(false);
 
   const refreshIntegration = useCallback(async (): Promise<void> => {
-    const [s, st, ping] = await Promise.all([
+    const [s, st, ping, mongo] = await Promise.all([
       window.deepcut.getSettings(),
       window.deepcut.spotifyStatus(),
       window.deepcut.getLlmPingResult(),
+      window.deepcut.mongoPing(),
     ]);
     setSettings(s);
     setSpotifySt(st);
     setLlmPing(ping);
+    setMongoDb(mongo);
   }, []);
 
   useEffect(() => {
@@ -141,14 +133,25 @@ function IntegrationStatusStrip(): ReactElement {
   }, [refreshIntegration]);
 
   useEffect(() => {
+    /** LLM ping updates cached result in main; reload settings too so warnings/icons match saved keys/provider. */
     const onLlmPingUpdated = (): void => {
-      void window.deepcut.getLlmPingResult().then(setLlmPing);
+      void refreshIntegration();
     };
     window.addEventListener(LLM_PING_UPDATED_EVENT, onLlmPingUpdated);
     return () => {
       window.removeEventListener(LLM_PING_UPDATED_EVENT, onLlmPingUpdated);
     };
-  }, []);
+  }, [refreshIntegration]);
+
+  useEffect(() => {
+    const onIntegrationRefresh = (): void => {
+      void refreshIntegration();
+    };
+    window.addEventListener(INTEGRATION_STATUS_REFRESH_EVENT, onIntegrationRefresh);
+    return () => {
+      window.removeEventListener(INTEGRATION_STATUS_REFRESH_EVENT, onIntegrationRefresh);
+    };
+  }, [refreshIntegration]);
 
   useEffect(() => {
     return window.deepcut.onLibraryScanState((p) => {
@@ -226,19 +229,37 @@ function IntegrationStatusStrip(): ReactElement {
     localIcon = <IconOk />;
   }
 
+  let dbTitle: string;
+  let dbBtnClass = 'np-status-btn';
+  let dbIcon: ReactElement;
+  if (mongoDb === null) {
+    dbTitle = 'Checking database…';
+    dbBtnClass += ' np-status-btn--warn';
+    dbIcon = <IconSpinner />;
+  } else if (mongoDb.ok) {
+    dbTitle = 'MongoDB is connected. Open Settings for database status.';
+    dbBtnClass += ' np-status-btn--ok';
+    dbIcon = <IconOk />;
+  } else {
+    dbTitle = mongoDb.message;
+    dbBtnClass += ' np-status-btn--error';
+    dbIcon = <IconAlert />;
+  }
+
   return (
     <div className="np-status-strip" role="group" aria-label="Integration status">
       <button
         type="button"
-        className={`np-status-btn ${spotifyWarn ? 'np-status-btn--warn' : 'np-status-btn--ok'}`}
-        title={spotifyLabel}
-        aria-label={spotifyLabel}
+        className={dbBtnClass}
+        title={dbTitle}
+        aria-label={dbTitle}
+        aria-busy={mongoDb === null}
         onClick={() => {
-          void navigate('/settings?tab=spotify');
+          void navigate('/settings?tab=database');
         }}
       >
-        <span className="np-status-btn-label">Spotify</span>
-        {spotifyWarn ? <IconAlert /> : <IconOk />}
+        <span className="np-status-btn-label">DB</span>
+        {dbIcon}
       </button>
       <button
         type="button"
@@ -265,6 +286,18 @@ function IntegrationStatusStrip(): ReactElement {
         <span className="np-status-btn-label">Local</span>
         {localIcon}
       </button>
+      <button
+        type="button"
+        className={`np-status-btn ${spotifyWarn ? 'np-status-btn--warn' : 'np-status-btn--ok'}`}
+        title={spotifyLabel}
+        aria-label={spotifyLabel}
+        onClick={() => {
+          void navigate('/settings?tab=spotify');
+        }}
+      >
+        <span className="np-status-btn-label">Spotify</span>
+        {spotifyWarn ? <IconAlert /> : <IconOk />}
+      </button>
     </div>
   );
 }
@@ -272,71 +305,11 @@ function IntegrationStatusStrip(): ReactElement {
 export function NowPlayingBar(): ReactElement {
   const pb = usePlayback();
   const cur = pb.current;
-  const [trackTitle, setTrackTitle] = useState<string>('Nothing playing');
-  const [trackArtist, setTrackArtist] = useState<string>('');
-
-  useEffect(() => {
-    if (cur === null) {
-      setTrackTitle('Nothing playing');
-      setTrackArtist('');
-      return undefined;
-    }
-    if (cur.source === 'local') {
-      let cancelled = false;
-      setTrackTitle('…');
-      setTrackArtist('');
-      void window.deepcut.getLocalTracks().then((raw) => {
-        if (cancelled) {
-          return;
-        }
-        const tracks = raw as LocalTrack[];
-        const t = tracks.find((x) => x.localTrackId === cur.localTrackId);
-        if (t !== undefined) {
-          setTrackTitle(t.title);
-          setTrackArtist(t.artist);
-        } else {
-          setTrackTitle(basenameFromPath(cur.filePath));
-          setTrackArtist('');
-        }
-      });
-      return () => {
-        cancelled = true;
-      };
-    }
-    const ac = new AbortController();
-    setTrackTitle('…');
-    setTrackArtist('');
-    void (async (): Promise<void> => {
-      try {
-        const token = await window.deepcut.getSpotifyAccessToken();
-        if (!token) {
-          setTrackTitle('Spotify');
-          setTrackArtist('');
-          return;
-        }
-        const res = await fetch(
-          `https://api.spotify.com/v1/tracks/${encodeURIComponent(cur.spotifyId)}`,
-          { headers: { Authorization: `Bearer ${token}` }, signal: ac.signal }
-        );
-        if (!res.ok) {
-          setTrackTitle('Spotify');
-          setTrackArtist('');
-          return;
-        }
-        const j = (await res.json()) as { name?: string; artists?: { name?: string }[] };
-        setTrackTitle(j.name ?? 'Spotify');
-        setTrackArtist(spotifyArtistLine(j));
-      } catch {
-        if (!ac.signal.aborted) {
-          setTrackTitle('Spotify');
-          setTrackArtist('');
-        }
-      }
-    })();
-    return () => {
-      ac.abort();
-    };
-  }, [cur]);
+  let trackTitle = 'Nothing playing';
+  if (cur !== null) {
+    trackTitle = pb.nowPlayingTrackTitle === null ? '…' : pb.nowPlayingTrackTitle;
+  }
+  const trackArtist = pb.primaryArtistDisplayName ?? '';
 
   let label = '—';
   if (cur?.source === 'spotify') {

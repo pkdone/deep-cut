@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { enrichmentArtistKeySchema } from '../domain/schemas/artist-enrichment.js';
 import { appSettingsSchema } from '../domain/schemas/app-settings.js';
 import { playbackSessionSchema } from '../domain/schemas/playback-session.js';
 import { trackRefSchema } from '../domain/schemas/track-ref.js';
@@ -25,6 +26,7 @@ export const IPC_CHANNELS = {
   savePlaybackSession: 'deepcut:savePlaybackSession',
   getArtistEnrichment: 'deepcut:getArtistEnrichment',
   refreshArtistEnrichment: 'deepcut:refreshArtistEnrichment',
+  resolvePlaybackArtistForEnrichment: 'deepcut:resolvePlaybackArtistForEnrichment',
   /** Run a minimal LLM request; updates cached result in main. */
   llmPing: 'deepcut:llmPing',
   /** Last llmPing result without making a network call. */
@@ -58,8 +60,13 @@ export const spotifySearchPayload = z.object({
 });
 
 export const artistEnrichmentPayload = z.object({
-  spotifyArtistId: z.string().min(1),
+  enrichmentArtistKey: enrichmentArtistKeySchema,
   artistName: z.string().min(1),
+});
+
+export const resolvePlaybackArtistForEnrichmentPayload = z.object({
+  trackRef: trackRefSchema,
+  primaryArtistDisplayName: z.string().min(1).optional(),
 });
 
 export const savePlaylistPayload = z.object({
