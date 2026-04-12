@@ -4,6 +4,7 @@ import { app, BrowserWindow, Menu } from 'electron';
 import { loadEnv } from '../../shared/load-env.js';
 import { logError, logInfo } from '../../shared/app-logger.js';
 import { ConfigurationError } from '../../shared/errors.js';
+import { IPC_CHANNELS } from '../ipc-contract.js';
 import { registerIpcHandlers } from './register-ipc-handlers.js';
 
 loadEnv();
@@ -49,7 +50,13 @@ function isNavigationAllowed(current: string, next: string): boolean {
 
 function broadcastLibraryUpdated(): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('deepcut:onLibraryUpdated');
+    mainWindow.webContents.send(IPC_CHANNELS.onLibraryUpdated);
+  }
+}
+
+function broadcastLibraryScanState(scanning: boolean): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(IPC_CHANNELS.libraryScanState, { scanning });
   }
 }
 
@@ -86,6 +93,7 @@ void app.whenReady().then(() => {
     getMongoUri,
     getMainWindow: () => mainWindow,
     broadcastLibraryUpdated,
+    broadcastLibraryScanState,
   });
   createWindow();
   logInfo('DeepCut main started');

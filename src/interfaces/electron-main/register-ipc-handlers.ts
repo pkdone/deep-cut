@@ -2,6 +2,7 @@ import { type BrowserWindow, dialog, ipcMain } from 'electron';
 import chokidar from 'chokidar';
 import { v4 as uuidv4 } from 'uuid';
 import { fetchArtistEnrichment } from '../../infrastructure/llm/fetch-artist-enrichment.js';
+import { pingAnthropic, pingOpenAi } from '../../infrastructure/llm/llm-connectivity-ping.js';
 import { isEnrichmentFresh } from '../../application/enrichment-cache-policy.js';
 import { buildUnifiedSearch } from '../../application/unified-search.js';
 import type { AppSettings } from '../../domain/schemas/app-settings.js';
@@ -19,10 +20,11 @@ import {
   getArtistAlbums,
   getArtistTopTracks,
   spotifySearch,
+  type SpotifySearchApiEntityType,
 } from '../../infrastructure/spotify/spotify-api.js';
 import { startSpotifyAuthorization } from '../../infrastructure/spotify/spotify-oauth.js';
 import { logError, logInfo, logWarn } from '../../shared/app-logger.js';
-import { ConfigurationError, ValidationError } from '../../shared/errors.js';
+import { ConfigurationError, ExternalServiceError, ValidationError } from '../../shared/errors.js';
 import {
   IPC_CHANNELS,
   addTrackToPlaylistPayload,
@@ -37,6 +39,18 @@ import {
 let spotifyAccessToken: string | null = null;
 let spotifyExpiresAtMs = 0;
 
+/** Last llmPing IPC result; null if never run or cleared (e.g. LLM set to none). */
+let lastLlmPingResult: { ok: boolean; message: string | null } | null = null;
+
+const SPOTIFY_SEARCH_API_TYPE: Record<
+  'artists' | 'albums' | 'tracks',
+  SpotifySearchApiEntityType
+> = {
+  artists: 'artist',
+  albums: 'album',
+  tracks: 'track',
+};
+
 function defaultSettings(): AppSettings {
   return {
     localMusicFolders: [],
@@ -48,8 +62,12 @@ export function registerIpcHandlers(params: {
   getMongoUri: () => string;
   getMainWindow: () => BrowserWindow | null;
   broadcastLibraryUpdated: () => void;
+  broadcastLibraryScanState: (scanning: boolean) => void;
 }): void {
-  const { getMongoUri, getMainWindow, broadcastLibraryUpdated } = params;
+  const { getMongoUri, getMainWindow, broadcastLibraryUpdated, broadcastLibraryScanState } = params;
+
+  let libraryScanning = false;
+  let scanMutex: Promise<void> = Promise.resolve();
 
   let watchStop: (() => Promise<void>) | null = null;
 
@@ -83,31 +101,47 @@ export function registerIpcHandlers(params: {
   };
 
   const rescanAllFolders = async (): Promise<void> => {
-    const uri = getMongoUri();
-    const client = await getMongoClient(uri);
-    const db = client.db();
-    const settingsRepo = new MongoAppSettingsRepository(
-      db.collection(MongoAppSettingsRepository.collectionName)
-    );
-    const localRepo = new MongoLocalTrackRepository(db.collection(MongoLocalTrackRepository.collectionName));
-    const s = (await settingsRepo.get()) ?? defaultSettings();
-    const merged: Awaited<ReturnType<typeof scanLocalFolder>> = [];
-    for (const root of s.localMusicFolders) {
-      const part = await scanLocalFolder(root);
-      merged.push(...part);
+    const previous = scanMutex;
+    let releaseCurrent!: () => void;
+    scanMutex = new Promise<void>((resolve) => {
+      releaseCurrent = resolve;
+    });
+    await previous;
+    libraryScanning = true;
+    broadcastLibraryScanState(true);
+    try {
+      const uri = getMongoUri();
+      const client = await getMongoClient(uri);
+      const db = client.db();
+      const settingsRepo = new MongoAppSettingsRepository(
+        db.collection(MongoAppSettingsRepository.collectionName)
+      );
+      const localRepo = new MongoLocalTrackRepository(
+        db.collection(MongoLocalTrackRepository.collectionName)
+      );
+      const s = (await settingsRepo.get()) ?? defaultSettings();
+      const merged: Awaited<ReturnType<typeof scanLocalFolder>> = [];
+      for (const root of s.localMusicFolders) {
+        const part = await scanLocalFolder(root);
+        merged.push(...part);
+      }
+      const byPath = new Map(merged.map((t) => [t.filePath, t] as const));
+      const existing = await localRepo.findAll();
+      const toRemove = existing
+        .filter((e) => {
+          const still = [...byPath.keys()].some((p) => e.filePath === p);
+          return !still;
+        })
+        .map((e) => e.localTrackId);
+      await localRepo.removeByIds(toRemove);
+      await localRepo.upsertMany([...byPath.values()]);
+      broadcastLibraryUpdated();
+      logInfo('Library rescan complete', { tracks: byPath.size });
+    } finally {
+      libraryScanning = false;
+      broadcastLibraryScanState(false);
+      releaseCurrent();
     }
-    const byPath = new Map(merged.map((t) => [t.filePath, t] as const));
-    const existing = await localRepo.findAll();
-    const toRemove = existing
-      .filter((e) => {
-        const still = [...byPath.keys()].some((p) => e.filePath === p);
-        return !still;
-      })
-      .map((e) => e.localTrackId);
-    await localRepo.removeByIds(toRemove);
-    await localRepo.upsertMany([...byPath.values()]);
-    broadcastLibraryUpdated();
-    logInfo('Library rescan complete', { tracks: byPath.size });
   };
 
   ipcMain.handle(IPC_CHANNELS.mongoPing, async () => {
@@ -126,6 +160,52 @@ export function registerIpcHandlers(params: {
     );
     return (await settingsRepo.get()) ?? defaultSettings();
   });
+
+  ipcMain.handle(IPC_CHANNELS.llmPing, async () => {
+    const uri = getMongoUri();
+    const client = await getMongoClient(uri);
+    const db = client.db();
+    const settingsRepo = new MongoAppSettingsRepository(
+      db.collection(MongoAppSettingsRepository.collectionName)
+    );
+    const s = (await settingsRepo.get()) ?? defaultSettings();
+    if (s.llmProvider === 'none') {
+      lastLlmPingResult = null;
+      return { ok: false as const, message: 'LLM provider is not selected.' };
+    }
+    const key =
+      s.llmProvider === 'openai' ? s.openaiApiKey?.trim() ?? '' : s.anthropicApiKey?.trim() ?? '';
+    if (key === '') {
+      lastLlmPingResult = {
+        ok: false,
+        message: 'API key is missing for the selected provider.',
+      };
+      return lastLlmPingResult;
+    }
+    try {
+      if (s.llmProvider === 'openai') {
+        await pingOpenAi(key);
+      } else {
+        await pingAnthropic(key);
+      }
+      lastLlmPingResult = { ok: true, message: null };
+      return lastLlmPingResult;
+    } catch (e: unknown) {
+      let msg: string;
+      if (e instanceof ExternalServiceError) {
+        msg = e.message;
+      } else if (e instanceof Error) {
+        msg = e.message;
+      } else {
+        msg = String(e);
+      }
+      logWarn('LLM ping failed', { message: msg });
+      lastLlmPingResult = { ok: false, message: msg };
+      return lastLlmPingResult;
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.getLlmPingResult, () => lastLlmPingResult);
 
   ipcMain.handle(IPC_CHANNELS.saveSettings, async (_e, raw: unknown) => {
     const parsed = saveSettingsPayload.safeParse(raw);
@@ -158,6 +238,8 @@ export function registerIpcHandlers(params: {
     await rescanAllFolders();
     return { ok: true as const };
   });
+
+  ipcMain.handle(IPC_CHANNELS.getLibraryScanState, () => ({ scanning: libraryScanning }));
 
   ipcMain.handle(IPC_CHANNELS.getLocalTracks, async () => {
     const uri = getMongoUri();
@@ -251,7 +333,7 @@ export function registerIpcHandlers(params: {
     if (!parsed.success) {
       throw new ValidationError('Invalid search payload');
     }
-    const { query, sourceFilter } = parsed.data;
+    const { query, sourceFilter, entityType } = parsed.data;
     const uri = getMongoUri();
     const client = await getMongoClient(uri);
     const db = client.db();
@@ -264,7 +346,11 @@ export function registerIpcHandlers(params: {
     let spotify = null;
     if (sourceFilter !== 'local' && spotifyAccessToken && Date.now() < spotifyExpiresAtMs - 60_000) {
       try {
-        spotify = await spotifySearch(spotifyAccessToken, query);
+        spotify = await spotifySearch(
+          spotifyAccessToken,
+          query,
+          SPOTIFY_SEARCH_API_TYPE[entityType]
+        );
       } catch (e) {
         logWarn('Spotify search failed', { e: String(e) });
       }
@@ -275,6 +361,7 @@ export function registerIpcHandlers(params: {
       locals,
       appPlaylists: appPl,
       query,
+      entityType,
     });
 
     if (sourceFilter === 'spotify') {

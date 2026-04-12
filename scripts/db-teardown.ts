@@ -3,7 +3,13 @@ import { loadEnv } from './load-env.js';
 loadEnv();
 
 if (process.env.ALLOW_DB_TEARDOWN !== '1') {
-  throw new Error('Set ALLOW_DB_TEARDOWN=1 to confirm database teardown');
+  // eslint-disable-next-line no-console
+  console.error(
+    'Refusing to tear down the database without explicit confirmation.\n' +
+      'This drops managed MongoDB collections. To proceed, run:\n' +
+      '  ALLOW_DB_TEARDOWN=1 npm run db:teardown',
+  );
+  process.exit(1);
 }
 
 const uri = process.env.MONGODB_URI;

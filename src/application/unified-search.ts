@@ -93,6 +93,11 @@ export interface UnifiedSearchResult {
   readonly usedLocalTrackIds: readonly string[];
 }
 
+/** Search UI entity mode (Artists / Albums / Tracks). */
+export type UnifiedSearchEntityType = 'artists' | 'albums' | 'tracks';
+
+const NULL_SPOTIFY_PAGING: SpotifyPagingLinks = { next: null, previous: null };
+
 export function getSearchDebounceMs(): number {
   return DEBOUNCE_MS;
 }
@@ -106,16 +111,7 @@ export function filterLocalTracksByQuery(
   locals: readonly LocalTrack[],
   query: string
 ): LocalTrack[] {
-  const q = query.trim().toLowerCase();
-  if (q === '') {
-    return [...locals];
-  }
-  return locals.filter(
-    (t) =>
-      t.title.toLowerCase().includes(q) ||
-      t.artist.toLowerCase().includes(q) ||
-      t.album.toLowerCase().includes(q)
-  );
+  return filterLocalsByQuery(locals, query);
 }
 
 /**
@@ -202,22 +198,27 @@ export function splitUnifiedTracksForPagination(rows: readonly UnifiedSearchRow[
   };
 }
 
-export function buildUnifiedSearch(params: {
+function filterLocalsByQuery(locals: readonly LocalTrack[], query: string): LocalTrack[] {
+  const q = query.trim().toLowerCase();
+  if (q === '') {
+    return [...locals];
+  }
+  return locals.filter(
+    (t) =>
+      t.title.toLowerCase().includes(q) ||
+      t.artist.toLowerCase().includes(q) ||
+      t.album.toLowerCase().includes(q)
+  );
+}
+
+function buildUnifiedSearchFull(params: {
   spotify: SpotifySearchResults | null;
   locals: readonly LocalTrack[];
   appPlaylists: { id: string; name: string }[];
   query: string;
 }): UnifiedSearchResult {
   const q = params.query.trim().toLowerCase();
-  const localsFiltered =
-    q === ''
-      ? [...params.locals]
-      : params.locals.filter(
-          (t) =>
-            t.title.toLowerCase().includes(q) ||
-            t.artist.toLowerCase().includes(q) ||
-            t.album.toLowerCase().includes(q)
-        );
+  const localsFiltered = filterLocalsByQuery(params.locals, params.query);
 
   const spotify = params.spotify;
   const spotifyArtists = spotify?.artists ?? [];
@@ -300,4 +301,182 @@ export function buildUnifiedSearch(params: {
     spotifyPaging: spotify?.paging ?? null,
     usedLocalTrackIds: [...usedLocal],
   };
+}
+
+function buildUnifiedSearchArtistsOnly(params: {
+  spotify: SpotifySearchResults | null;
+  locals: readonly LocalTrack[];
+  query: string;
+}): UnifiedSearchResult {
+  const q = params.query.trim().toLowerCase();
+  const localsFiltered = filterLocalsByQuery(params.locals, params.query);
+
+  const localArtistMap = new Map<string, number>();
+  for (const t of localsFiltered) {
+    localArtistMap.set(t.artist, (localArtistMap.get(t.artist) ?? 0) + 1);
+  }
+  const localArtists = [...localArtistMap.entries()]
+    .map(([name, trackCount]) => ({ name, trackCount }))
+    .filter((a) => q === '' || a.name.toLowerCase().includes(q))
+    .sort((a, b) => b.trackCount - a.trackCount || a.name.localeCompare(b.name))
+    .slice(0, MAX_UNIFIED_SECTION_ITEMS);
+
+  const spotify = params.spotify;
+  const spotifyArtists = spotify?.artists ?? [];
+
+  return {
+    artists: spotifyArtists,
+    albums: [],
+    tracks: [],
+    playlists: [],
+    localArtists,
+    localAlbums: [],
+    spotifyPaging: spotify
+      ? {
+          artists: spotify.paging.artists,
+          albums: NULL_SPOTIFY_PAGING,
+          tracks: NULL_SPOTIFY_PAGING,
+          playlists: NULL_SPOTIFY_PAGING,
+        }
+      : null,
+    usedLocalTrackIds: [],
+  };
+}
+
+function buildUnifiedSearchAlbumsOnly(params: {
+  spotify: SpotifySearchResults | null;
+  locals: readonly LocalTrack[];
+  query: string;
+}): UnifiedSearchResult {
+  const q = params.query.trim().toLowerCase();
+  const localsFiltered = filterLocalsByQuery(params.locals, params.query);
+
+  const localAlbumMap = new Map<string, { artist: string; album: string; trackCount: number }>();
+  for (const t of localsFiltered) {
+    const albumKey = `${t.artist}\0${t.album}`;
+    const cur = localAlbumMap.get(albumKey);
+    if (cur !== undefined) {
+      cur.trackCount += 1;
+    } else {
+      localAlbumMap.set(albumKey, { artist: t.artist, album: t.album, trackCount: 1 });
+    }
+  }
+  const localAlbums = [...localAlbumMap.values()]
+    .filter(
+      (x) =>
+        q === '' ||
+        x.artist.toLowerCase().includes(q) ||
+        x.album.toLowerCase().includes(q)
+    )
+    .sort(
+      (a, b) =>
+        b.trackCount - a.trackCount ||
+        a.album.localeCompare(b.album) ||
+        a.artist.localeCompare(b.artist)
+    )
+    .slice(0, MAX_UNIFIED_SECTION_ITEMS);
+
+  const spotify = params.spotify;
+  const spotifyAlbums = spotify?.albums ?? [];
+
+  return {
+    artists: [],
+    albums: spotifyAlbums,
+    tracks: [],
+    playlists: [],
+    localArtists: [],
+    localAlbums,
+    spotifyPaging: spotify
+      ? {
+          artists: NULL_SPOTIFY_PAGING,
+          albums: spotify.paging.albums,
+          tracks: NULL_SPOTIFY_PAGING,
+          playlists: NULL_SPOTIFY_PAGING,
+        }
+      : null,
+    usedLocalTrackIds: [],
+  };
+}
+
+function buildUnifiedSearchTracksOnly(params: {
+  spotify: SpotifySearchResults | null;
+  locals: readonly LocalTrack[];
+  appPlaylists: { id: string; name: string }[];
+  query: string;
+}): UnifiedSearchResult {
+  const q = params.query.trim().toLowerCase();
+  const localsFiltered = filterLocalsByQuery(params.locals, params.query);
+
+  const spotify = params.spotify;
+  const spotifyTracks = spotify?.tracks ?? [];
+  const spotifyPlaylistsFromApi = spotify?.playlists ?? [];
+
+  const usedLocal = new Set<string>();
+  const spotifyRows = mergeAdditionalSpotifyTracks(spotifyTracks, localsFiltered, usedLocal);
+  const rows: UnifiedSearchRow[] = [...spotifyRows];
+
+  for (const lt of localsFiltered) {
+    if (usedLocal.has(lt.localTrackId)) {
+      continue;
+    }
+    rows.push({
+      kind: 'merged-track',
+      primaryTitle: lt.title,
+      artistLine: lt.artist,
+      albumLine: lt.album,
+      local: {
+        localTrackId: lt.localTrackId,
+        filePath: lt.filePath,
+        durationMs: lt.durationMs,
+      },
+    });
+  }
+
+  const cappedRows = rows.slice(0, MAX_UNIFIED_SECTION_ITEMS);
+
+  const playlists: SpotifyPlaylist[] = [...spotifyPlaylistsFromApi];
+  for (const p of params.appPlaylists) {
+    if (q === '' || p.name.toLowerCase().includes(q)) {
+      playlists.push({ id: p.id, name: p.name, owner: 'DeepCut' });
+    }
+  }
+  const playlistCap = playlists.slice(0, MAX_UNIFIED_SECTION_ITEMS);
+
+  return {
+    artists: [],
+    albums: [],
+    tracks: cappedRows,
+    playlists: playlistCap,
+    localArtists: [],
+    localAlbums: [],
+    spotifyPaging: spotify
+      ? {
+          artists: NULL_SPOTIFY_PAGING,
+          albums: NULL_SPOTIFY_PAGING,
+          tracks: spotify.paging.tracks,
+          playlists: spotify.paging.playlists,
+        }
+      : null,
+    usedLocalTrackIds: [...usedLocal],
+  };
+}
+
+export function buildUnifiedSearch(params: {
+  spotify: SpotifySearchResults | null;
+  locals: readonly LocalTrack[];
+  appPlaylists: { id: string; name: string }[];
+  query: string;
+  entityType?: UnifiedSearchEntityType;
+}): UnifiedSearchResult {
+  const { spotify, locals, appPlaylists, query, entityType } = params;
+  if (entityType === undefined) {
+    return buildUnifiedSearchFull({ spotify, locals, appPlaylists, query });
+  }
+  if (entityType === 'artists') {
+    return buildUnifiedSearchArtistsOnly({ spotify, locals, query });
+  }
+  if (entityType === 'albums') {
+    return buildUnifiedSearchAlbumsOnly({ spotify, locals, query });
+  }
+  return buildUnifiedSearchTracksOnly({ spotify, locals, appPlaylists, query });
 }
