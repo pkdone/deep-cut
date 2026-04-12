@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld('deepcut', {
   saveSettings: async (s: unknown) => ipcRenderer.invoke(IPC_CHANNELS.saveSettings, s),
   pickMusicFolder: async () => ipcRenderer.invoke(IPC_CHANNELS.pickMusicFolder),
   rescanLibrary: async () => ipcRenderer.invoke(IPC_CHANNELS.rescanLibrary),
+  getLibraryScanState: async () =>
+    ipcRenderer.invoke(IPC_CHANNELS.getLibraryScanState) as Promise<{ scanning: boolean }>,
   getLocalTracks: async () => ipcRenderer.invoke(IPC_CHANNELS.getLocalTracks),
   spotifyStartLogin: async () => ipcRenderer.invoke(IPC_CHANNELS.spotifyStartLogin),
   spotifyLogout: async () => ipcRenderer.invoke(IPC_CHANNELS.spotifyLogout),
@@ -22,6 +24,13 @@ contextBridge.exposeInMainWorld('deepcut', {
   getArtistEnrichment: async (p: unknown) => ipcRenderer.invoke(IPC_CHANNELS.getArtistEnrichment, p),
   refreshArtistEnrichment: async (p: unknown) =>
     ipcRenderer.invoke(IPC_CHANNELS.refreshArtistEnrichment, p),
+  llmPing: async () =>
+    ipcRenderer.invoke(IPC_CHANNELS.llmPing) as Promise<{ ok: boolean; message: string | null }>,
+  getLlmPingResult: async () =>
+    ipcRenderer.invoke(IPC_CHANNELS.getLlmPingResult) as Promise<{
+      ok: boolean;
+      message: string | null;
+    } | null>,
   getSpotifyAccessToken: async () => ipcRenderer.invoke(IPC_CHANNELS.getSpotifyAccessToken),
   spotifyArtistCatalog: async (artistId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.spotifyArtistCatalog, artistId),
@@ -34,6 +43,15 @@ contextBridge.exposeInMainWorld('deepcut', {
     ipcRenderer.on(IPC_CHANNELS.onLibraryUpdated, listener);
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.onLibraryUpdated, listener);
+    };
+  },
+  onLibraryScanState: (cb: (payload: { scanning: boolean }) => void) => {
+    const listener = (_e: unknown, payload: { scanning: boolean }): void => {
+      cb(payload);
+    };
+    ipcRenderer.on(IPC_CHANNELS.libraryScanState, listener);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.libraryScanState, listener);
     };
   },
 });

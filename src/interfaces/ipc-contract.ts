@@ -9,6 +9,7 @@ export const IPC_CHANNELS = {
   saveSettings: 'deepcut:saveSettings',
   pickMusicFolder: 'deepcut:pickMusicFolder',
   rescanLibrary: 'deepcut:rescanLibrary',
+  getLibraryScanState: 'deepcut:getLibraryScanState',
   getLocalTracks: 'deepcut:getLocalTracks',
   spotifyStartLogin: 'deepcut:spotifyStartLogin',
   spotifyLogout: 'deepcut:spotifyLogout',
@@ -24,19 +25,28 @@ export const IPC_CHANNELS = {
   savePlaybackSession: 'deepcut:savePlaybackSession',
   getArtistEnrichment: 'deepcut:getArtistEnrichment',
   refreshArtistEnrichment: 'deepcut:refreshArtistEnrichment',
+  /** Run a minimal LLM request; updates cached result in main. */
+  llmPing: 'deepcut:llmPing',
+  /** Last llmPing result without making a network call. */
+  getLlmPingResult: 'deepcut:getLlmPingResult',
   getSpotifyAccessToken: 'deepcut:getSpotifyAccessToken',
   spotifyArtistCatalog: 'deepcut:spotifyArtistCatalog',
   spotifyGetArtist: 'deepcut:spotifyGetArtist',
   spotifyGetAlbum: 'deepcut:spotifyGetAlbum',
   onLibraryUpdated: 'deepcut:onLibraryUpdated',
+  /** Main → renderer: payload `{ scanning: boolean }`. */
+  libraryScanState: 'deepcut:libraryScanState',
 } as const;
 
 export const saveSettingsPayload = appSettingsSchema;
 export const savePlaybackPayload = playbackSessionSchema;
 
+export const unifiedSearchEntityTypeSchema = z.enum(['artists', 'albums', 'tracks']);
+
 export const unifiedSearchPayload = z.object({
   query: z.string(),
   sourceFilter: z.enum(['all', 'spotify', 'local']),
+  entityType: unifiedSearchEntityTypeSchema.default('artists'),
 });
 
 export const spotifySearchNextPayload = z.object({

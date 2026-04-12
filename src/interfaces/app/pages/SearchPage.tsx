@@ -124,6 +124,7 @@ function SearchSectionListArea(props: {
 export function SearchPage(): ReactElement {
   const pb = usePlayback();
   const [q, setQ] = useState('');
+  const [searchEntity, setSearchEntity] = useState<SectionKey>('artists');
   const [filter, setFilter] = useState<'all' | 'spotify' | 'local'>('all');
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [addToPl, setAddToPl] = useState<string>(ADD_TO_NEW_PLAYLIST);
@@ -140,6 +141,26 @@ export function SearchPage(): ReactElement {
 
   const debounceMs = useMemo(() => getSearchDebounceMs(), []);
   const pageSize = useMemo(() => getSearchCap(), []);
+
+  const searchPlaceholder = useMemo(() => {
+    if (searchEntity === 'artists') {
+      return 'Search artists…';
+    }
+    if (searchEntity === 'albums') {
+      return 'Search albums…';
+    }
+    return 'Search tracks…';
+  }, [searchEntity]);
+
+  const resultsSectionTitle = useMemo(() => {
+    if (searchEntity === 'artists') {
+      return 'Artists';
+    }
+    if (searchEntity === 'albums') {
+      return 'Albums';
+    }
+    return 'Tracks';
+  }, [searchEntity]);
 
   const reloadPlaylists = useCallback(async (): Promise<void> => {
     const [pl, s] = await Promise.all([
@@ -180,10 +201,11 @@ export function SearchPage(): ReactElement {
     setModalPlaylistName('');
   }, []);
 
-  const runSearch = useCallback(async (query: string, f: typeof filter) => {
+  const runSearch = useCallback(async (query: string, f: typeof filter, entity: SectionKey) => {
     const r = (await window.deepcut.unifiedSearch({
       query,
       sourceFilter: f,
+      entityType: entity,
     })) as UnifiedSearchResult;
     setResult(r);
   }, []);
@@ -194,12 +216,12 @@ export function SearchPage(): ReactElement {
 
   useEffect(() => {
     const t = setTimeout(() => {
-      void runSearch(q, filter);
+      void runSearch(q, filter, searchEntity);
     }, debounceMs);
     return () => {
       clearTimeout(t);
     };
-  }, [q, filter, runSearch, debounceMs]);
+  }, [q, filter, searchEntity, runSearch, debounceMs]);
 
   useEffect(() => {
     setSectionPage({ artists: 0, albums: 0, tracks: 0 });
@@ -400,13 +422,49 @@ export function SearchPage(): ReactElement {
         style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'center' }}
       >
         <input
-          placeholder="Search artists, albums, tracks…"
+          placeholder={searchPlaceholder}
           value={q}
           onChange={(e) => {
             setQ(e.target.value);
           }}
           style={{ flex: '1 1 240px' }}
         />
+        <fieldset className="search-entity-fieldset">
+          <legend>Search for</legend>
+          <label className="search-entity-label">
+            <input
+              type="radio"
+              name="searchEntity"
+              checked={searchEntity === 'artists'}
+              onChange={() => {
+                setSearchEntity('artists');
+              }}
+            />{' '}
+            Artists
+          </label>
+          <label className="search-entity-label">
+            <input
+              type="radio"
+              name="searchEntity"
+              checked={searchEntity === 'albums'}
+              onChange={() => {
+                setSearchEntity('albums');
+              }}
+            />{' '}
+            Albums
+          </label>
+          <label className="search-entity-label">
+            <input
+              type="radio"
+              name="searchEntity"
+              checked={searchEntity === 'tracks'}
+              onChange={() => {
+                setSearchEntity('tracks');
+              }}
+            />{' '}
+            Tracks
+          </label>
+        </fieldset>
         <select value={filter} onChange={(e) => { setFilter(e.target.value as typeof filter); }}>
           <option value="all">All sources</option>
           <option value="spotify">Spotify</option>
@@ -428,81 +486,9 @@ export function SearchPage(): ReactElement {
       />
 
       {result ? (
-        <>
-          <div className="search-artists-albums-row">
-            <section className="panel search-artists-albums-panel">
-              <SearchSectionTop title="Artists" />
-              <SearchSectionListArea
-                title="Artists"
-                page={sectionPage.artists}
-                totalRows={artistRows.length}
-                pageSize={pageSize}
-                nextUrl={spotifyPaging?.artists.next}
-                onUp={handleArtistUp}
-                onDown={handleArtistDown}
-              >
-                {visibleArtists.map((row) =>
-                  row.kind === 'spotify' ? (
-                    <div key={`spotify-${row.a.id}`} className="list-row">
-                      <div>
-                        <Link to={`/artist/${row.a.id}`}>{row.a.name}</Link>
-                        <span className="badge badge-spotify">Spotify</span>
-                      </div>
-                    </div>
-                  ) : (
-                    <div key={`local-artist-${row.a.name}`} className="list-row">
-                      <div>
-                        <Link to={`/local-artist/${encodeURIComponent(row.a.name)}`}>{row.a.name}</Link>
-                        <span className="subtitle"> · {row.a.trackCount} tracks</span>
-                        <span className="badge badge-local">Local</span>
-                      </div>
-                    </div>
-                  )
-                )}
-              </SearchSectionListArea>
-            </section>
-
-            <section className="panel search-artists-albums-panel">
-              <SearchSectionTop title="Albums" />
-              <SearchSectionListArea
-                title="Albums"
-                page={sectionPage.albums}
-                totalRows={albumRows.length}
-                pageSize={pageSize}
-                nextUrl={spotifyPaging?.albums.next}
-                onUp={handleAlbumUp}
-                onDown={handleAlbumDown}
-              >
-                {visibleAlbums.map((row) =>
-                  row.kind === 'spotify' ? (
-                    <div key={`spotify-album-${row.al.id}`} className="list-row">
-                      <div>
-                        <Link to={`/album/${row.al.id}`}>{row.al.name}</Link>
-                        <span className="subtitle">{row.al.artists.join(', ')}</span>
-                        <span className="badge badge-spotify">Spotify</span>
-                      </div>
-                    </div>
-                  ) : (
-                    <div key={`local-album-${row.al.artist}-${row.al.album}`} className="list-row">
-                      <div>
-                        <Link
-                          to={`/local-album/${encodeURIComponent(row.al.artist)}/${encodeURIComponent(row.al.album)}`}
-                        >
-                          {localAlbumDisplayTitle(row.al.album)}
-                        </Link>
-                        <span className="subtitle">{row.al.artist}</span>
-                        <span className="subtitle"> · {row.al.trackCount} tracks</span>
-                        <span className="badge badge-local">Local</span>
-                      </div>
-                    </div>
-                  )
-                )}
-              </SearchSectionListArea>
-            </section>
-          </div>
-
-          <section className="panel search-tracks-panel">
-            <SearchSectionTop title="Tracks" />
+        <section className="panel search-results-panel">
+          <SearchSectionTop title={resultsSectionTitle} />
+          {searchEntity === 'tracks' ? (
             <div
               className="search-tracks-toolbar"
               style={{
@@ -539,6 +525,74 @@ export function SearchPage(): ReactElement {
                 </select>
               </label>
             </div>
+          ) : null}
+          {searchEntity === 'artists' ? (
+            <SearchSectionListArea
+              title="Artists"
+              page={sectionPage.artists}
+              totalRows={artistRows.length}
+              pageSize={pageSize}
+              nextUrl={spotifyPaging?.artists.next}
+              onUp={handleArtistUp}
+              onDown={handleArtistDown}
+            >
+              {visibleArtists.map((row) =>
+                row.kind === 'spotify' ? (
+                  <div key={`spotify-${row.a.id}`} className="list-row">
+                    <div>
+                      <Link to={`/artist/${row.a.id}`}>{row.a.name}</Link>
+                      <span className="badge badge-spotify">Spotify</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div key={`local-artist-${row.a.name}`} className="list-row">
+                    <div>
+                      <Link to={`/local-artist/${encodeURIComponent(row.a.name)}`}>{row.a.name}</Link>
+                      <span className="subtitle"> · {row.a.trackCount} tracks</span>
+                      <span className="badge badge-local">Local</span>
+                    </div>
+                  </div>
+                )
+              )}
+            </SearchSectionListArea>
+          ) : null}
+          {searchEntity === 'albums' ? (
+            <SearchSectionListArea
+              title="Albums"
+              page={sectionPage.albums}
+              totalRows={albumRows.length}
+              pageSize={pageSize}
+              nextUrl={spotifyPaging?.albums.next}
+              onUp={handleAlbumUp}
+              onDown={handleAlbumDown}
+            >
+              {visibleAlbums.map((row) =>
+                row.kind === 'spotify' ? (
+                  <div key={`spotify-album-${row.al.id}`} className="list-row">
+                    <div>
+                      <Link to={`/album/${row.al.id}`}>{row.al.name}</Link>
+                      <span className="subtitle">{row.al.artists.join(', ')}</span>
+                      <span className="badge badge-spotify">Spotify</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div key={`local-album-${row.al.artist}-${row.al.album}`} className="list-row">
+                    <div>
+                      <Link
+                        to={`/local-album/${encodeURIComponent(row.al.artist)}/${encodeURIComponent(row.al.album)}`}
+                      >
+                        {localAlbumDisplayTitle(row.al.album)}
+                      </Link>
+                      <span className="subtitle">{row.al.artist}</span>
+                      <span className="subtitle"> · {row.al.trackCount} tracks</span>
+                      <span className="badge badge-local">Local</span>
+                    </div>
+                  </div>
+                )
+              )}
+            </SearchSectionListArea>
+          ) : null}
+          {searchEntity === 'tracks' ? (
             <SearchSectionListArea
               title="Tracks"
               page={sectionPage.tracks}
@@ -549,102 +603,90 @@ export function SearchPage(): ReactElement {
               onDown={handleTrackDown}
               floatNav="left"
             >
-            {visibleTracks.map((row, idx) => {
-              let rowKey: string;
-              if (row.spotify) {
-                rowKey = `sp-${row.spotify.id}-${row.local?.localTrackId ?? 'x'}`;
-              } else if (row.local) {
-                rowKey = `loc-${row.local.localTrackId}`;
-              } else {
-                rowKey = `t-${idx}`;
-              }
-              return (
-              <div
-                key={rowKey}
-                className="list-row"
-              >
-                <div>
-                  <strong>{row.primaryTitle}</strong>
-                  {row.subtitle ? <div className="subtitle">{row.subtitle}</div> : null}
-                  <div className="subtitle">
-                    {row.artistLine} — {row.albumLine}
+              {visibleTracks.map((row, idx) => {
+                let rowKey: string;
+                if (row.spotify) {
+                  rowKey = `sp-${row.spotify.id}-${row.local?.localTrackId ?? 'x'}`;
+                } else if (row.local) {
+                  rowKey = `loc-${row.local.localTrackId}`;
+                } else {
+                  rowKey = `t-${idx}`;
+                }
+                return (
+                  <div key={rowKey} className="list-row">
+                    <div>
+                      <strong>{row.primaryTitle}</strong>
+                      {row.subtitle ? <div className="subtitle">{row.subtitle}</div> : null}
+                      <div className="subtitle">
+                        {row.artistLine} — {row.albumLine}
+                      </div>
+                      {row.spotify ? <span className="badge badge-spotify">Spotify</span> : null}
+                      {row.local ? <span className="badge badge-local">Local</span> : null}
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        className="primary"
+                        onClick={() => {
+                          if (row.spotify) {
+                            void pb.playRef({
+                              source: 'spotify',
+                              spotifyId: row.spotify.id,
+                              spotifyUri: row.spotify.uri,
+                            });
+                          } else if (row.local) {
+                            void pb.playRef({
+                              source: 'local',
+                              localTrackId: row.local.localTrackId,
+                              filePath: row.local.filePath,
+                            });
+                          }
+                        }}
+                      >
+                        Play
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost"
+                        onClick={() => {
+                          let ref: TrackRef | null = null;
+                          if (row.spotify) {
+                            ref = {
+                              source: 'spotify',
+                              spotifyId: row.spotify.id,
+                              spotifyUri: row.spotify.uri,
+                            };
+                          } else if (row.local) {
+                            ref = {
+                              source: 'local',
+                              localTrackId: row.local.localTrackId,
+                              filePath: row.local.filePath,
+                            };
+                          }
+                          if (ref === null) {
+                            return;
+                          }
+                          if (addToPl === ADD_TO_NEW_PLAYLIST) {
+                            void addTrackToNewPlaylist(ref);
+                            return;
+                          }
+                          if (addToPl.length > 0) {
+                            void window.deepcut.addTrackToPlaylist({ playlistId: addToPl, track: ref });
+                            return;
+                          }
+                          setPlaylistModal({ kind: 'addTrack', track: ref });
+                          setModalPlaylistName('');
+                        }}
+                      >
+                        Add to playlist
+                      </button>
+                    </div>
                   </div>
-                  <span className="badge badge-both">
-                    {(() => {
-                      if (row.spotify && row.local) {
-                        return 'Spotify + Local';
-                      }
-                      if (row.spotify) {
-                        return 'Spotify';
-                      }
-                      return 'Local';
-                    })()}
-                  </span>
-                </div>
-                <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-                  <button
-                    type="button"
-                    className="primary"
-                    onClick={() => {
-                      if (row.spotify) {
-                        void pb.playRef({
-                          source: 'spotify',
-                          spotifyId: row.spotify.id,
-                          spotifyUri: row.spotify.uri,
-                        });
-                      } else if (row.local) {
-                        void pb.playRef({
-                          source: 'local',
-                          localTrackId: row.local.localTrackId,
-                          filePath: row.local.filePath,
-                        });
-                      }
-                    }}
-                  >
-                    Play
-                  </button>
-                  <button
-                    type="button"
-                    className="ghost"
-                    onClick={() => {
-                      let ref: TrackRef | null = null;
-                      if (row.spotify) {
-                        ref = {
-                          source: 'spotify',
-                          spotifyId: row.spotify.id,
-                          spotifyUri: row.spotify.uri,
-                        };
-                      } else if (row.local) {
-                        ref = {
-                          source: 'local',
-                          localTrackId: row.local.localTrackId,
-                          filePath: row.local.filePath,
-                        };
-                      }
-                      if (ref === null) {
-                        return;
-                      }
-                      if (addToPl === ADD_TO_NEW_PLAYLIST) {
-                        void addTrackToNewPlaylist(ref);
-                        return;
-                      }
-                      if (addToPl.length > 0) {
-                        void window.deepcut.addTrackToPlaylist({ playlistId: addToPl, track: ref });
-                        return;
-                      }
-                      setPlaylistModal({ kind: 'addTrack', track: ref });
-                      setModalPlaylistName('');
-                    }}
-                  >
-                    Add to playlist
-                  </button>
-                </div>
-              </div>
-              );
-            })}
+                );
+              })}
             </SearchSectionListArea>
-          </section>
-        </>
+          ) : null}
+        </section>
       ) : null}
     </div>
   );

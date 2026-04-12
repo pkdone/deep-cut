@@ -7,6 +7,7 @@ import type { TrackRef } from '../../domain/schemas/track-ref.js';
 export interface UnifiedSearchPayload {
   query: string;
   sourceFilter: 'all' | 'spotify' | 'local';
+  entityType: 'artists' | 'albums' | 'tracks';
 }
 
 export interface ArtistEnrichmentPayload {
@@ -20,6 +21,7 @@ export interface DeepcutApi {
   saveSettings: (s: AppSettings) => Promise<{ ok: boolean }>;
   pickMusicFolder: () => Promise<string | null>;
   rescanLibrary: () => Promise<{ ok: boolean }>;
+  getLibraryScanState: () => Promise<{ scanning: boolean }>;
   getLocalTracks: () => Promise<unknown[]>;
   spotifyStartLogin: () => Promise<{ ok: boolean; expiresAtMs: number }>;
   spotifyLogout: () => Promise<{ ok: boolean }>;
@@ -42,6 +44,8 @@ export interface DeepcutApi {
   refreshArtistEnrichment: (
     p: ArtistEnrichmentPayload
   ) => Promise<{ ok: boolean; cached: unknown }>;
+  llmPing: () => Promise<{ ok: boolean; message: string | null }>;
+  getLlmPingResult: () => Promise<{ ok: boolean; message: string | null } | null>;
   getSpotifyAccessToken: () => Promise<string | null>;
   spotifyArtistCatalog: (artistId: string) => Promise<{
     albums: { id: string; name: string; releaseYear?: number }[];
@@ -55,6 +59,7 @@ export interface DeepcutApi {
     tracks: { items: { id: string; name: string; uri: string; duration_ms: number }[] };
   } | null>;
   onLibraryUpdated: (cb: () => void) => () => void;
+  onLibraryScanState: (cb: (payload: { scanning: boolean }) => void) => () => void;
 }
 
 declare global {

@@ -1,9 +1,13 @@
 import { artistEnrichmentPayloadSchema } from '../../domain/schemas/artist-enrichment.js';
 import type { ArtistEnrichmentCache } from '../../domain/schemas/artist-enrichment.js';
 import type { LlmProvider } from '../../domain/schemas/app-settings.js';
+import { ANTHROPIC_MESSAGES_MODEL } from './anthropic-messages-model.js';
 import { getArtistAlbums, getArtistTopTracks } from '../spotify/spotify-api.js';
 import { logError } from '../../shared/app-logger.js';
 import { ExternalServiceError } from '../../shared/errors.js';
+
+/** OpenAI Chat Completions model id for artist enrichment when provider is OpenAI (GPT-4.1 mini). */
+const OPENAI_ENRICHMENT_MODEL = 'gpt-4.1-mini';
 
 const ENRICHMENT_JSON_INSTRUCTION = `Return a single JSON object with keys: synopsis (string), albums (array of {name, releaseYear, rank}), topTracks (array of exactly 10 {title, rank}). Ranks start at 1.`;
 
@@ -68,7 +72,7 @@ async function callOpenAi(apiKey: string, user: string): Promise<string> {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'gpt-4o-mini',
+      model: OPENAI_ENRICHMENT_MODEL,
       messages: [
         { role: 'system', content: 'You output only valid JSON for music artist summaries.' },
         { role: 'user', content: user },
@@ -95,7 +99,7 @@ async function callAnthropic(apiKey: string, user: string): Promise<string> {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'claude-3-5-haiku-20241022',
+      model: ANTHROPIC_MESSAGES_MODEL,
       max_tokens: 4096,
       messages: [{ role: 'user', content: user }],
     }),

@@ -124,13 +124,17 @@ export async function fetchSpotifySearchUrl(
   return mapSpotifySearchJson(data);
 }
 
+/** Spotify Web API `type` query value for `/v1/search` (single-entity search). */
+export type SpotifySearchApiEntityType = 'artist' | 'album' | 'track';
+
 export async function spotifySearch(
   accessToken: string,
-  query: string
+  query: string,
+  spotifyType: SpotifySearchApiEntityType
 ): Promise<SpotifySearchResults> {
   const u = new URL('https://api.spotify.com/v1/search');
   u.searchParams.set('q', query);
-  u.searchParams.set('type', 'artist,album,track,playlist');
+  u.searchParams.set('type', spotifyType);
   u.searchParams.set('limit', '20');
   const res = await fetch(u, {
     headers: { Authorization: `Bearer ${accessToken}` },

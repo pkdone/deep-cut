@@ -1,5 +1,13 @@
-import { useEffect, useState, type ReactElement } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
+import { useNavigate } from 'react-router-dom';
+import type { AppSettings } from '../../domain/schemas/app-settings.js';
 import type { LocalTrack } from '../../domain/schemas/local-track.js';
+import {
+  getLlmIntegrationWarning,
+  getLocalFoldersWarning,
+  getSpotifyIntegrationWarning,
+} from '../../shared/integration-status-messages.js';
+import { LLM_PING_UPDATED_EVENT } from './llm-ping-events.js';
 import { usePlayback } from './playback/PlaybackProvider.js';
 
 function basenameFromPath(p: string): string {
@@ -40,9 +48,225 @@ function SpeakerMutedIcon(): ReactElement {
   );
 }
 
+function IconAlert(): ReactElement {
+  return (
+    <svg
+      width={18}
+      height={18}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden={true}
+      className="np-status-icon np-status-icon--warn"
+    >
+      <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z" />
+    </svg>
+  );
+}
+
+function IconOk(): ReactElement {
+  return (
+    <svg
+      width={18}
+      height={18}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden={true}
+      className="np-status-icon np-status-icon--ok"
+    >
+      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
+    </svg>
+  );
+}
+
+function IconSpinner(): ReactElement {
+  return (
+    <svg
+      width={18}
+      height={18}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden={true}
+      className="np-status-icon np-status-spinner"
+    >
+      <path d="M12 6V3L8 7l4 4V8c2.76 0 5 2.24 5 5 0 2.13-1.34 3.94-3.21 4.67l-.96.96C14.55 18.45 13.28 19 12 19c-3.86 0-7-3.14-7-7 0-1.28.55-2.55 1.37-3.79l-1.41-1.41C3.56 9.63 3 11.26 3 13c0 4.97 4.03 9 9 9 1.74 0 3.37-.56 4.75-1.51l.96-.96A6.93 6.93 0 0 0 19 13c0-3.86-3.14-7-7-7z" />
+    </svg>
+  );
+}
+
 function spotifyArtistLine(j: { artists?: { name?: string }[] }): string {
   const names = j.artists?.map((a) => a.name).filter((n): n is string => Boolean(n)) ?? [];
   return names.join(', ');
+}
+
+type LlmPingState = { ok: boolean; message: string | null } | null;
+
+function IntegrationStatusStrip(): ReactElement {
+  const navigate = useNavigate();
+  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [spotifySt, setSpotifySt] = useState<{ connected: boolean; expiresAtMs: number } | null>(
+    null
+  );
+  const [libraryScanning, setLibraryScanning] = useState(false);
+  const [llmPing, setLlmPing] = useState<LlmPingState>(null);
+  const initialLlmPingDone = useRef(false);
+
+  const refreshIntegration = useCallback(async (): Promise<void> => {
+    const [s, st, ping] = await Promise.all([
+      window.deepcut.getSettings(),
+      window.deepcut.spotifyStatus(),
+      window.deepcut.getLlmPingResult(),
+    ]);
+    setSettings(s);
+    setSpotifySt(st);
+    setLlmPing(ping);
+  }, []);
+
+  useEffect(() => {
+    void refreshIntegration();
+    void window.deepcut.getLibraryScanState().then((r) => {
+      setLibraryScanning(r.scanning);
+    });
+  }, [refreshIntegration]);
+
+  useEffect(() => {
+    const id = setInterval(() => void refreshIntegration(), 45_000);
+    const onFocus = (): void => {
+      void refreshIntegration();
+    };
+    window.addEventListener('focus', onFocus);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [refreshIntegration]);
+
+  useEffect(() => {
+    const onLlmPingUpdated = (): void => {
+      void window.deepcut.getLlmPingResult().then(setLlmPing);
+    };
+    window.addEventListener(LLM_PING_UPDATED_EVENT, onLlmPingUpdated);
+    return () => {
+      window.removeEventListener(LLM_PING_UPDATED_EVENT, onLlmPingUpdated);
+    };
+  }, []);
+
+  useEffect(() => {
+    return window.deepcut.onLibraryScanState((p) => {
+      setLibraryScanning(p.scanning);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (settings === null || initialLlmPingDone.current) {
+      return;
+    }
+    const warn = getLlmIntegrationWarning(settings);
+    if (warn !== null) {
+      setLlmPing(null);
+      return;
+    }
+    initialLlmPingDone.current = true;
+    void window.deepcut.llmPing().then((r) => {
+      setLlmPing(r);
+    });
+  }, [settings]);
+
+  const spotifyPayload = spotifySt ?? { connected: false, expiresAtMs: 0 };
+  const spotifyWarn =
+    settings !== null ? getSpotifyIntegrationWarning(settings, spotifyPayload) : null;
+  const llmWarn = settings !== null ? getLlmIntegrationWarning(settings) : null;
+  const localWarn = settings !== null ? getLocalFoldersWarning(settings) : null;
+
+  const spotifyLabel =
+    spotifyWarn ??
+    'Spotify is connected. Open Settings to manage Spotify.';
+
+  let llmTitle: string;
+  let llmBtnClass = 'np-status-btn';
+  let llmIcon: ReactElement;
+  if (llmWarn !== null) {
+    llmTitle = llmWarn;
+    llmBtnClass += ' np-status-btn--warn';
+    llmIcon = <IconAlert />;
+  } else if (llmPing === null) {
+    llmTitle = 'Checking LLM connectivity…';
+    llmBtnClass += ' np-status-btn--warn';
+    llmIcon = <IconSpinner />;
+  } else if (!llmPing.ok) {
+    llmTitle = llmPing.message ?? 'LLM connectivity check failed. Open Settings.';
+    llmBtnClass += ' np-status-btn--error';
+    llmIcon = <IconAlert />;
+  } else {
+    llmTitle = 'LLM is reachable. Open Settings to change provider or keys.';
+    llmBtnClass += ' np-status-btn--ok';
+    llmIcon = <IconOk />;
+  }
+  let localLabel = 'Local music folders are configured. Open Settings.';
+  if (libraryScanning) {
+    localLabel = 'Scanning local library. Open Settings for local folders.';
+  } else if (localWarn !== null) {
+    localLabel = localWarn;
+  }
+
+  let localBtnClass = 'np-status-btn';
+  if (libraryScanning) {
+    localBtnClass += ' np-status-btn--scanning';
+  } else if (localWarn) {
+    localBtnClass += ' np-status-btn--warn';
+  } else {
+    localBtnClass += ' np-status-btn--ok';
+  }
+
+  let localIcon: ReactElement;
+  if (libraryScanning) {
+    localIcon = <IconSpinner />;
+  } else if (localWarn !== null) {
+    localIcon = <IconAlert />;
+  } else {
+    localIcon = <IconOk />;
+  }
+
+  return (
+    <div className="np-status-strip" role="group" aria-label="Integration status">
+      <button
+        type="button"
+        className={`np-status-btn ${spotifyWarn ? 'np-status-btn--warn' : 'np-status-btn--ok'}`}
+        title={spotifyLabel}
+        aria-label={spotifyLabel}
+        onClick={() => {
+          void navigate('/settings?tab=spotify');
+        }}
+      >
+        <span className="np-status-btn-label">Spotify</span>
+        {spotifyWarn ? <IconAlert /> : <IconOk />}
+      </button>
+      <button
+        type="button"
+        className={llmBtnClass}
+        title={llmTitle}
+        aria-label={llmTitle}
+        onClick={() => {
+          void navigate('/settings?tab=llm');
+        }}
+      >
+        <span className="np-status-btn-label">LLM</span>
+        {llmIcon}
+      </button>
+      <button
+        type="button"
+        className={localBtnClass}
+        title={localLabel}
+        aria-label={localLabel}
+        aria-busy={libraryScanning}
+        onClick={() => {
+          void navigate('/settings?tab=local');
+        }}
+      >
+        <span className="np-status-btn-label">Local</span>
+        {localIcon}
+      </button>
+    </div>
+  );
 }
 
 export function NowPlayingBar(): ReactElement {
@@ -189,8 +413,13 @@ export function NowPlayingBar(): ReactElement {
           </div>
         </div>
       </div>
-      <div style={{ textAlign: 'right', fontSize: '0.75rem', color: 'var(--muted)' }}>
-        {pb.error ? <span className="error-text">{pb.error}</span> : null}
+      <div className="np-status-column">
+        <IntegrationStatusStrip />
+        {pb.error ? (
+          <div className="np-playback-error">
+            <span className="error-text">{pb.error}</span>
+          </div>
+        ) : null}
       </div>
     </div>
   );
