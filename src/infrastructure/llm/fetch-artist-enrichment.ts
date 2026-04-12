@@ -2,31 +2,40 @@ import { artistEnrichmentPayloadSchema } from '../../domain/schemas/artist-enric
 import type { ArtistEnrichmentCache } from '../../domain/schemas/artist-enrichment.js';
 import type { LlmProvider } from '../../domain/schemas/app-settings.js';
 import { ANTHROPIC_MESSAGES_MODEL } from './anthropic-messages-model.js';
-import { getArtistAlbums, getArtistTopTracks } from '../spotify/spotify-api.js';
+import { repairMalformedLlmJsonQuotes } from './repair-llm-json.js';
 import { logError } from '../../shared/app-logger.js';
 import { ExternalServiceError } from '../../shared/errors.js';
 
 /** OpenAI Chat Completions model id for artist enrichment when provider is OpenAI (GPT-4.1 mini). */
 const OPENAI_ENRICHMENT_MODEL = 'gpt-4.1-mini';
 
-const ENRICHMENT_JSON_INSTRUCTION = `Return a single JSON object with keys: synopsis (string), albums (array of {name, releaseYear, rank}), topTracks (array of exactly 10 {title, rank}). Ranks start at 1.`;
+const ENRICHMENT_JSON_INSTRUCTION = [
+  'Return a single JSON object with exactly these keys:',
+  '- synopsis: string, one opening paragraph of 6 to 8 sentences; each sentence must be fairly long and substantive; no bullet lists inside synopsis; at least ~320 characters total.',
+  '- rankedAlbums: array of { name, releaseYear, rank } — notable studio albums only (original studio LPs and core studio releases), ranked by significance (rank 1 = most important). Do not put live albums, compilations, soundtracks, or rarities collections here — use the other arrays for those. Include up to 20 entries; sort ranks from 1 upward without gaps where possible.',
+  '- topTracks: array of exactly 10 objects { title, rank, releaseYear? } — ranks 1 through 10 exactly once each; include releaseYear when known for that recording (optional).',
+  '- liveAlbums: at most 3 objects { name, releaseYear, rank } — ranks 1–3 within this list only; official live or concert releases.',
+  '- bestOfCompilations: at most 3 objects { name, releaseYear, rank } — ranks 1–3 within this list; greatest-hits or anthologies.',
+  '- raritiesCompilations: at most 3 objects { name, releaseYear, rank } — ranks 1–3 within this list; B-sides, outtakes, rarities collections.',
+  '- bandMembers: array of { name, instruments, periods } — instruments is string array (e.g. ["vocals","guitar"]). periods is non-empty array of { startYear, endYear } where endYear may be null if still in the band; use multiple objects for boomerang members (e.g. 1990–1995 then 1998–2001). Order members from most significant first.',
+  'IMPORTANT: rankedAlbums (studio albums only) and topTracks are required — populate rankedAlbums and exactly 10 topTracks. Fill live/best-of/rarities when fitting releases exist, each with distinct ranks 1..n within that array.',
+  'releaseYear is a number (e.g. 1993). Base everything on general knowledge; the app does not supply an external catalog.',
+  'Strict JSON only: wrap strings with a single " character; never write \\" before an opening or closing quote — that is invalid JSON.',
+].join(' ');
 
 export async function fetchArtistEnrichment(params: {
   provider: Exclude<LlmProvider, 'none'>;
   apiKey: string;
-  accessToken: string;
-  spotifyArtistId: string;
-  artistName: string;
+  enrichmentArtistKey: string;
+  artistDisplayName: string;
 }): Promise<ArtistEnrichmentCache> {
-  const albums = await getArtistAlbums(params.accessToken, params.spotifyArtistId);
-  const top = await getArtistTopTracks(params.accessToken, params.spotifyArtistId);
-  const context = [
-    `Artist: ${params.artistName}`,
-    `Albums (from Spotify): ${albums.map((a) => `${a.name} (${a.releaseYear ?? '?'})`).join('; ')}`,
-    `Top tracks (from Spotify): ${top.map((t) => t.name).join('; ')}`,
+  const userPrompt = [
+    `Artist: ${params.artistDisplayName}`,
+    '',
+    'Produce JSON only as specified. rankedAlbums must be studio albums only — important original studio releases (do not duplicate titles from liveAlbums, bestOfCompilations, or raritiesCompilations); topTracks must be exactly ten distinct songs with ranks 1–10. Classify releases carefully: live recordings belong in liveAlbums; career-spanning hits sets and anthologies in bestOfCompilations; B-sides, demos, and rarities box sets in raritiesCompilations. For solo artists or one core member, bandMembers may have one entry or a short list as appropriate.',
+    '',
+    ENRICHMENT_JSON_INSTRUCTION,
   ].join('\n');
-
-  const userPrompt = `${context}\n\n${ENRICHMENT_JSON_INSTRUCTION}`;
 
   let raw: string;
   if (params.provider === 'openai') {
@@ -35,22 +44,33 @@ export async function fetchArtistEnrichment(params: {
     raw = await callAnthropic(params.apiKey, userPrompt);
   }
 
+  const extracted = extractJson(raw);
   let parsed: unknown;
   try {
-    parsed = JSON.parse(extractJson(raw));
-  } catch (e) {
-    logError('LLM JSON parse failed', { error: String(e), raw: raw.slice(0, 500) });
-    throw new ExternalServiceError('Artist enrichment returned invalid JSON');
+    parsed = JSON.parse(extracted);
+  } catch (first) {
+    try {
+      parsed = JSON.parse(repairMalformedLlmJsonQuotes(extracted));
+    } catch (second) {
+      logError('LLM JSON parse failed', {
+        error: String(second),
+        afterRepair: true,
+        firstError: String(first),
+        raw: raw.slice(0, 500),
+      });
+      throw new ExternalServiceError('Artist enrichment returned invalid JSON');
+    }
   }
 
   const payload = artistEnrichmentPayloadSchema.parse(parsed);
 
   return {
-    spotifyArtistId: params.spotifyArtistId,
-    artistName: params.artistName,
+    enrichmentArtistKey: params.enrichmentArtistKey,
+    artistName: params.artistDisplayName,
     payload,
     cachedAt: new Date(),
     provider: params.provider,
+    docSchemaVersion: 4,
   };
 }
 
@@ -74,7 +94,11 @@ async function callOpenAi(apiKey: string, user: string): Promise<string> {
     body: JSON.stringify({
       model: OPENAI_ENRICHMENT_MODEL,
       messages: [
-        { role: 'system', content: 'You output only valid JSON for music artist summaries.' },
+        {
+          role: 'system',
+          content:
+            'You output only valid JSON for music artist summaries. Use standard JSON string quoting: a double quote to start and end each string; do not emit \\" at string boundaries.',
+        },
         { role: 'user', content: user },
       ],
       temperature: 0.4,

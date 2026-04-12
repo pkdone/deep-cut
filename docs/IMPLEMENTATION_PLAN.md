@@ -104,7 +104,7 @@ Aligned with **`docs/PRD.md`** §3, §14, §22. Summary:
 | **Search** | Unified, **grouped by type**, source badges, source filter, **merged duplicates** (fuzzy), default play source Spotify when available; **debounce + per-section caps** (tune in implementation) |
 | **Playback** | In-app preferred; cross-source handoff acceptable; failure → local fuzzy fallback → error → skip |
 | **Playlists** | CRUD, reorder, mixed sources, persist |
-| **Artist intelligence** | LLM (OpenAI + Anthropic selectable), strict JSON, schema in prompt, **30-day cache**, manual refresh, retry once, partial render on failure |
+| **Artist intelligence** | LLM-only synthesis from **primary artist name** (no catalog injection), strict JSON (synopsis **6–8** sentences; **ranked albums**; **10 top tracks**; up to **3** live / **3** best-of / **3** rarities with **years**; **band members** with instruments), **30-day cache** keyed by **normalized artist key**, **Now Playing** UI, pass-through artist name from playback metadata, manual refresh, retry once, partial render on failure |
 | **Offline** | Local library + local playback + **cached** enrichment |
 | **Settings** | Folders, Spotify, LLM, MongoDB status, cache, basic prefs |
 | **Theme** | Dark only |
@@ -125,7 +125,7 @@ Suggested order (from PRD §25, refined):
 5. **Spotify**: **browser OAuth on each cold start**, search API, metadata; attempt **in-app playback**; failure behaviour per PRD; Settings status.
 6. **Unified search + merge**: grouped results, filters, fuzzy duplicate merge, Spotify-preferred play on merged rows; **Spotify-primary title** with optional **subtitle** for differing local metadata.
 7. **Playlists**: app playlists in MongoDB, mixed playback, reorder/remove.
-8. **Artist enrichment**: LLM adapters (OpenAI, Anthropic), JSON schema validation, cache + refresh UI, offline cached read.
+8. **Artist enrichment**: LLM adapters (OpenAI, Anthropic), JSON schema validation, cache + refresh on **Now Playing**, offline cached read. **Persistence:** Zod-validated documents in Mongo; **`db:init`** today only ensures the collection + **unique index** on `enrichmentArtistKey` (no server-side JSON Schema on the payload body). **Breaking payload / `docSchemaVersion` changes:** no migration script in-repo; reset dev DB with **`db:teardown`** then **`db:init`**, or drop incompatible cache documents, before relying on the new shape.
 9. **Hardening**: media keys, **fixed-default** global shortcuts, local logs, `.deb`, E2E suite for PRD flows.
 
 Dependencies: 3 before 4; 5 before 6–7; 8 can overlap 5+ after cache/settings exist. **Exact parallelisation** is flexible; keep slices **vertically shippable** where possible.
@@ -182,7 +182,7 @@ Illustrative—not exhaustive. Names will evolve with ubiquitous language.
 | **CI default** | `npm run validate` (aggregate: lint, test, build—as defined in `package.json` when added) | Gate merges; matches project rule |
 | **Unit** | Fuzzy matching, enrichment JSON parsing/validation, cache TTL logic, pure domain services | Fast feedback, high-risk logic |
 | **Integration** | MongoDB repositories with test DB (`db:init` in fixture), Spotify/LLM **contract tests** with mocked HTTP | Persistence and adapter correctness |
-| **E2E** | Playwright (or chosen): connect Spotify (or stub), scan folder, search/play, playlist CRUD, artist page with enrichment | PRD §20.2 flows |
+| **E2E** | Playwright (or chosen): connect Spotify (or stub), scan folder, search/play, playlist CRUD, **Now Playing** artist intelligence (enrichment) while playing | PRD §20.2 flows |
 | **Manual** | Ubuntu 24.04+: `.deb` install, media keys, offline aeroplane mode for local+cache | Packaging and desktop integration |
 
 **Definition of done for v1**: PRD **§23 Release Readiness Gate** + green **`npm run validate`** + agreed E2E subset green in CI (with documented secrets strategy for Spotify in CI—often **skipped** or **mocked**).

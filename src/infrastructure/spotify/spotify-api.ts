@@ -146,6 +146,36 @@ export async function spotifySearch(
   return mapSpotifySearchJson(data);
 }
 
+export async function getSpotifyTrackPrimaryArtist(
+  accessToken: string,
+  trackId: string
+): Promise<{ id: string; name: string }> {
+  const res = await fetch(`https://api.spotify.com/v1/tracks/${encodeURIComponent(trackId)}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) {
+    throw new ExternalServiceError(`Spotify track failed: ${res.status}`);
+  }
+  const data = (await res.json()) as { artists?: { id: string; name: string }[] };
+  const first = data.artists?.[0];
+  if (first === undefined || first.id === '' || first.name === '') {
+    throw new ExternalServiceError('Spotify track has no primary artist');
+  }
+  return { id: first.id, name: first.name };
+}
+
+export async function searchArtistFirstMatch(
+  accessToken: string,
+  query: string
+): Promise<SpotifyArtist | null> {
+  const q = query.trim();
+  if (q === '') {
+    return null;
+  }
+  const r = await spotifySearch(accessToken, q, 'artist');
+  return r.artists[0] ?? null;
+}
+
 export async function getArtistTopTracks(
   accessToken: string,
   artistId: string

@@ -2,6 +2,7 @@ import type { SpotifySearchResults } from '../../application/unified-search.js';
 import type { AppSettings } from '../../domain/schemas/app-settings.js';
 import type { PlaybackSession } from '../../domain/schemas/playback-session.js';
 import type { Playlist } from '../../domain/schemas/playlist.js';
+import type { PlaybackArtistResolutionResult } from '../../domain/schemas/playback-artist-for-enrichment.js';
 import type { TrackRef } from '../../domain/schemas/track-ref.js';
 
 export interface UnifiedSearchPayload {
@@ -11,12 +12,17 @@ export interface UnifiedSearchPayload {
 }
 
 export interface ArtistEnrichmentPayload {
-  spotifyArtistId: string;
+  enrichmentArtistKey: string;
   artistName: string;
 }
 
+export interface ResolvePlaybackArtistForEnrichmentPayload {
+  trackRef: TrackRef;
+  primaryArtistDisplayName?: string;
+}
+
 export interface DeepcutApi {
-  mongoPing: () => Promise<{ ok: boolean }>;
+  mongoPing: () => Promise<{ ok: true } | { ok: false; message: string }>;
   getSettings: () => Promise<AppSettings>;
   saveSettings: (s: AppSettings) => Promise<{ ok: boolean }>;
   pickMusicFolder: () => Promise<string | null>;
@@ -44,6 +50,9 @@ export interface DeepcutApi {
   refreshArtistEnrichment: (
     p: ArtistEnrichmentPayload
   ) => Promise<{ ok: boolean; cached: unknown }>;
+  resolvePlaybackArtistForEnrichment: (
+    p: ResolvePlaybackArtistForEnrichmentPayload
+  ) => Promise<PlaybackArtistResolutionResult>;
   llmPing: () => Promise<{ ok: boolean; message: string | null }>;
   getLlmPingResult: () => Promise<{ ok: boolean; message: string | null } | null>;
   getSpotifyAccessToken: () => Promise<string | null>;

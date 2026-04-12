@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { AppSettings } from '../../../domain/schemas/app-settings.js';
+import { INTEGRATION_STATUS_REFRESH_EVENT } from '../integration-status-events.js';
 import { LLM_PING_UPDATED_EVENT } from '../llm-ping-events.js';
 
 const SETTINGS_TAB_PANELS: Readonly<Record<string, string>> = {
+  database: 'settings-panel-database',
   local: 'settings-panel-local',
   spotify: 'settings-panel-spotify',
   llm: 'settings-panel-llm',
 };
 
 const SETTINGS_TAB_HEADINGS: Readonly<Record<string, string>> = {
+  database: 'settings-heading-database',
   local: 'settings-heading-local',
   spotify: 'settings-heading-spotify',
   llm: 'settings-heading-llm',
@@ -41,6 +44,7 @@ export function SettingsPage(): React.ReactElement {
       await window.deepcut.saveSettings(next);
       setS(next);
       showSaveNotice();
+      window.dispatchEvent(new CustomEvent(INTEGRATION_STATUS_REFRESH_EVENT));
     },
     [showSaveNotice]
   );
@@ -76,10 +80,9 @@ export function SettingsPage(): React.ReactElement {
 
   useEffect(() => {
     void window.deepcut.getSettings().then(setS);
-    void window.deepcut.mongoPing().then(
-      () => { setMongo('Connected'); },
-      () => { setMongo('Unreachable — check MONGODB_URI and db:init'); }
-    );
+    void window.deepcut.mongoPing().then((r) => {
+      setMongo(r.ok ? 'Connected' : r.message);
+    });
   }, []);
 
   useEffect(() => {
@@ -137,8 +140,10 @@ export function SettingsPage(): React.ReactElement {
           {saveNotice}
         </div>
       ) : null}
-      <div className="panel">
-        <h2>Database</h2>
+      <div id="settings-panel-database" className="panel">
+        <h2 id="settings-heading-database" tabIndex={-1}>
+          Database
+        </h2>
         <p>Status: {mongo}</p>
       </div>
       <div id="settings-panel-local" className="panel">
@@ -227,11 +232,23 @@ export function SettingsPage(): React.ReactElement {
           <button
             type="button"
             className="primary"
-            onClick={() => void window.deepcut.spotifyStartLogin()}
+            onClick={() => {
+              void window.deepcut.spotifyStartLogin().then(() => {
+                window.dispatchEvent(new CustomEvent(INTEGRATION_STATUS_REFRESH_EVENT));
+              });
+            }}
           >
             Connect Spotify (browser OAuth)
           </button>
-          <button type="button" className="ghost" onClick={() => void window.deepcut.spotifyLogout()}>
+          <button
+            type="button"
+            className="ghost"
+            onClick={() => {
+              void window.deepcut.spotifyLogout().then(() => {
+                window.dispatchEvent(new CustomEvent(INTEGRATION_STATUS_REFRESH_EVENT));
+              });
+            }}
+          >
             Disconnect session
           </button>
         </div>

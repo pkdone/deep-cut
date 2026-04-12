@@ -2,7 +2,10 @@ import { contextBridge, ipcRenderer } from 'electron';
 import { IPC_CHANNELS } from '../ipc-contract.js';
 
 contextBridge.exposeInMainWorld('deepcut', {
-  mongoPing: async () => ipcRenderer.invoke(IPC_CHANNELS.mongoPing),
+  mongoPing: async () =>
+    ipcRenderer.invoke(IPC_CHANNELS.mongoPing) as Promise<
+      { ok: true } | { ok: false; message: string }
+    >,
   getSettings: async () => ipcRenderer.invoke(IPC_CHANNELS.getSettings),
   saveSettings: async (s: unknown) => ipcRenderer.invoke(IPC_CHANNELS.saveSettings, s),
   pickMusicFolder: async () => ipcRenderer.invoke(IPC_CHANNELS.pickMusicFolder),
@@ -24,6 +27,8 @@ contextBridge.exposeInMainWorld('deepcut', {
   getArtistEnrichment: async (p: unknown) => ipcRenderer.invoke(IPC_CHANNELS.getArtistEnrichment, p),
   refreshArtistEnrichment: async (p: unknown) =>
     ipcRenderer.invoke(IPC_CHANNELS.refreshArtistEnrichment, p),
+  resolvePlaybackArtistForEnrichment: async (p: unknown) =>
+    ipcRenderer.invoke(IPC_CHANNELS.resolvePlaybackArtistForEnrichment, p),
   llmPing: async () =>
     ipcRenderer.invoke(IPC_CHANNELS.llmPing) as Promise<{ ok: boolean; message: string | null }>,
   getLlmPingResult: async () =>

@@ -18,7 +18,7 @@ export async function initMongoDatabase(db: Db): Promise<void> {
   await db.collection(COLLECTIONS.localTracks).createIndex({ filePath: 1 }, { unique: true });
   await db.collection(COLLECTIONS.localTracks).createIndex({ localTrackId: 1 }, { unique: true });
   await db.collection(COLLECTIONS.playlists).createIndex({ playlistId: 1 }, { unique: true });
-  await db.collection(COLLECTIONS.artistEnrichment).createIndex({ spotifyArtistId: 1 }, { unique: true });
+  await db.collection(COLLECTIONS.artistEnrichment).createIndex({ enrichmentArtistKey: 1 }, { unique: true });
 
   const after = new Set((await db.listCollections().toArray()).map((c) => c.name));
   const missing = MANAGED_COLLECTIONS.filter((n) => !after.has(n));

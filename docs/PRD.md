@@ -19,7 +19,7 @@ DeepCut is a desktop music player unifying Spotify playlists and local music, di
 
 DeepCut is a single-user desktop music application for Linux power users who maintain a mixed library of streamed and local music. It combines Spotify playback and metadata with locally indexed MP3 files in one unified application, allowing users to search, browse, play, and build playlists across sources.
 
-Its main differentiator is an enriched artist page that dynamically generates useful artist intelligence, including an aggregated synopsis, ranked albums, and ranked top tracks, using a remote frontier LLM.
+Its main differentiator is **artist intelligence on the Now Playing screen** that dynamically generates useful context—including an **LLM-generated synopsis** (a multi-sentence opening paragraph), **ranked notable albums**, **ten ranked top tracks** (with optional release years in the UI), **up to three** notable releases in each of **live albums**, **best-of compilations**, and **rarities compilations** (each with **title and release year**), and a **ranked list of band members** (past and present, with instruments)—for the primary artist of the track currently playing, using a remote frontier LLM.
 
 ### 2.3 Primary Target User
 
@@ -51,7 +51,7 @@ DeepCut is intended to solve:
 The goals of v1 are:
 1. Provide a usable daily-driver desktop player for mixed Spotify and local music listening on Ubuntu.
 2. Make cross-source search, playback, and playlisting feel unified.
-3. Deliver a genuinely useful artist page that adds value beyond Spotify and typical Linux music players.
+3. Deliver genuinely useful **Now Playing** artist intelligence that adds value beyond Spotify and typical Linux music players.
 4. Keep v1 technically simple enough to build and maintain as a high-quality public codebase, even if real-world Spotify-connected usage remains personal-first.
 
 ### 3.2 Success Criteria
@@ -59,7 +59,7 @@ The goals of v1 are:
 v1 is successful if:
 1. **DeepCut can replace Lollypop for local playback.**
 2. **DeepCut can reliably build and play mixed playlists across Spotify and local music.**
-3. **The artist pages feel genuinely useful rather than gimmicky.**
+3. **The Now Playing artist intelligence feels genuinely useful rather than gimmicky.**
 
 ### 3.3 Non-Goals for v1
 
@@ -400,6 +400,7 @@ The Now Playing experience must include:
 - track text
 - artist text
 - album text
+- **artist intelligence** for the **current track’s primary artist** (see §13): synopsis, ranked albums, top 10 tracks, categorized album highlights (live, best-of, rarities; with release years), and band line-up—shown on the **Now Playing** screen only, for both Spotify and local playback where applicable
 
 ### 10.5 Hardware / Media Key Support
 
@@ -467,6 +468,7 @@ DeepCut does **not** need to restore broader UI state such as:
   - source indicator
   - progress/seek state
   - volume state
+  - artist intelligence for the primary artist of the current track (synopsis, ranked albums, top tracks, categorized highlights, band members) as specified in §13
 - Mixed playback across Spotify and local tracks works in playlists.
 - Brief handoff/reload between sources is acceptable in v1.
 - On restart, the app restores the prior playback session, including:
@@ -587,19 +589,23 @@ If a Spotify item in a playlist fails:
 
 ### 13.1 Core Product Differentiator
 
-The enriched artist page is the main differentiator of DeepCut.
+**Artist intelligence on the Now Playing screen** is a main differentiator of DeepCut.
 
-It must provide artist intelligence beyond what Spotify currently exposes in the product experience.
+It must provide insight for the **primary artist of the track currently playing**—beyond what Spotify alone surfaces in a typical playback UI—aggregated and presented while the user is listening.
 
-### 13.2 Mandatory Artist Page Content in v1
+### 13.2 Mandatory Now Playing Insight Content in v1
 
-The enriched artist page must include:
-- an artist synopsis aggregated from multiple sources
-- a list of the artist’s albums, showing at minimum:
-  - album name
-  - release year
-  - ranking
-- a list of the artist’s top 10 tracks, showing ranking
+The Now Playing experience must include, for that primary artist:
+- an **artist synopsis**: an opening paragraph of **6 to 8** fairly substantial sentences, **LLM-synthesized** from general knowledge (not copied from a fixed external feed)
+- **ranked albums**: a model-ranked list of notable **studio or canonical albums** (name, release year, rank)
+- **top 10 tracks**: exactly **ten** ranked tracks (title, rank 1–10; **release year** included in the UI when provided)
+- up to **three** entries each (only sections that apply), with **album or compilation title** and **release year** shown in the UI (e.g. title with year in brackets):
+  - **live albums** (official live / concert releases)
+  - **best-of compilations** (e.g. greatest-hits / career retrospectives)
+  - **rarities compilations** (e.g. B-sides, outtakes, rarities-focused releases)
+- a **list of people** who have been part of that act (**most significant first**), each with **instruments** and **tenure** as one or more year ranges in the UI (including **boomerang** members with multiple ranges); members are **not** presented as a ranked list
+
+Enrichment is keyed by a **stable normalized identity** derived from the **primary artist name** for the current track (same string the playback UI uses for the artist line). The app does **not** supply third-party catalog feeds to the LLM; lists and classifications are **model-generated** and may be incomplete or inaccurate (see §13.7 posture elsewhere). For **Spotify-sourced** tracks, the primary artist name comes from **playback metadata** (the same source as the Now Playing bar), not from a separate enrichment-specific catalog call when avoidable.
 
 ### 13.3 Generation Model
 
@@ -629,9 +635,8 @@ The prompt sent by the app must include:
 ### 13.6 Source Selection for Enrichment
 
 For v1:
-- the app should not hard-code specific ranking sites/sources
-- the prompt should describe the information the LLM is expected to gather and synthesize
-- the LLM may choose sources
+- enrichment content is **LLM-synthesized** from the **artist name** and the expected JSON shape; the app does **not** inject Spotify (or other) catalog dumps into the prompt
+- the prompt may describe the information the model is expected to produce (synopsis length and tone, ranked albums, top 10 tracks, categorized compilation lists, band members and instruments)
 
 ### 13.7 Provenance
 
@@ -649,11 +654,13 @@ If there is **no cached enrichment** and the user is **offline** (or the LLM end
 
 ### 13.9 Acceptance Criteria
 
-- Artist enrichment is generated on demand when the user opens or requests the artist page enrichment flow.
-- The artist page displays:
-  - artist synopsis
-  - album list with release year and ranking
-  - top 10 tracks with ranking
+- Artist enrichment is generated on demand when the user requests refresh from the **Now Playing** screen (or equivalent visible flow for the current track’s primary artist).
+- The **Now Playing** screen displays, for that artist:
+  - a primary heading that is the **artist name** only (no required suffix such as “Insights”)
+  - artist synopsis (multi-sentence opening paragraph per §13.2)
+  - ranked albums and top 10 tracks (with years when provided)
+  - live / best-of / rarities sections as applicable (each ranked within the section), with release years
+  - band member list with instruments and tenure year ranges (including multiple spans when applicable)
 - The app expects strict JSON output from the LLM.
 - The prompt sent to the LLM includes the expected JSON schema.
 - The enrichment flow works with:
@@ -664,9 +671,9 @@ If there is **no cached enrichment** and the user is **offline** (or the LLM end
   - the app retries once
   - then partially renders valid available data if possible
   - and shows a visible error message describing the issue
-- Enrichment results are cached per artist for 30 days.
+- Enrichment results are cached per **normalized primary-artist key** for 30 days.
 - If cached content exists, it can be displayed without regenerating immediately.
-- The user can manually refresh the artist cache immediately.
+- The user can manually refresh enrichment for the current playback artist immediately.
 - v1 is not required to show user-facing provenance/source attribution UI for generated enrichment.
 - When **offline** (or LLM unavailable) and **no cache** exists for the artist, the user sees a **clear message** explaining that enrichment is unavailable.
 
@@ -990,7 +997,7 @@ v1 must include a small set of end-to-end UI flows covering:
 - scan local folders
 - search and play a track
 - create, edit, and play a mixed playlist
-- open an artist page with LLM enrichment
+- view **Now Playing** artist intelligence (LLM enrichment) while a track plays
 
 ### 20.3 Quality Expectation
 
@@ -1009,7 +1016,7 @@ DeepCut should be treated as:
   - scan local folders
   - search and play a track
   - create/edit/play a mixed playlist
-  - open an artist page with LLM enrichment
+  - view **Now Playing** artist intelligence (LLM enrichment) while a track plays
 - The application can be validated through the project’s agreed validation/test workflow before being treated as complete.
 
 ---
@@ -1082,7 +1089,7 @@ DeepCut v1 is release-ready when all of the following are true:
 - session restore works for playback state
 - artist enrichment works with both OpenAI and Anthropic
 - enrichment caching and refresh work
-- offline local playback and cached artist-page viewing work
+- offline local playback and **cached Now Playing artist intelligence** work
 - required test coverage exists for agreed v1 scope
 
 ---
@@ -1155,6 +1162,6 @@ The next useful artifact after this PRD is an implementation plan split into thi
 3. Spotify auth/search/playback
 4. unified search + duplicate merging
 5. playlists
-6. artist enrichment pipeline + UI
+6. artist enrichment pipeline + **Now Playing** UI
 7. packaging/testing hardening
 
