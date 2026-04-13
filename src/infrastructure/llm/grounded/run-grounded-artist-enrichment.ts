@@ -1,5 +1,6 @@
 import type { ArtistInsightsRecord } from '../../../domain/schemas/artist-insights-record.js';
 import type { LlmProvider } from '../../../domain/schemas/app-settings.js';
+import { dedupeEnrichmentTargetNames } from '../../../shared/dedupe-enrichment-target-names.js';
 import { logInfo } from '../../../shared/app-logger.js';
 import { retrieveArtistEvidenceAnthropic } from './anthropic-retrieval.js';
 import { retrieveArtistEvidenceOpenAi } from './openai-retrieval.js';
@@ -60,17 +61,28 @@ export async function runGroundedArtistEnrichment(params: {
   const stage1Payload =
     stage1.result.kind === 'full' ? stage1.result.payload : stage1.result.payload;
 
+  const rawAlbumNames = [
+    ...stage1Payload.rankedAlbums.map((row) => row.name),
+    ...stage1Payload.liveAlbums.map((row) => row.name),
+    ...stage1Payload.bestOfCompilations.map((row) => row.name),
+    ...stage1Payload.raritiesCompilations.map((row) => row.name),
+  ];
+  const rawTrackTitles = stage1Payload.topTracks.map((row) => row.title);
+  const albumNames = dedupeEnrichmentTargetNames(rawAlbumNames);
+  const trackNames = dedupeEnrichmentTargetNames(rawTrackTitles);
+  if (rawAlbumNames.length !== albumNames.length || rawTrackTitles.length !== trackNames.length) {
+    logInfo('Grounded enrichment: deduped targeted retrieval names', {
+      albumsDropped: rawAlbumNames.length - albumNames.length,
+      tracksDropped: rawTrackTitles.length - trackNames.length,
+    });
+  }
+
   const targeted = await retrieveTargetedEnrichmentBuckets({
     provider: params.provider,
     apiKey: params.apiKey,
     artistDisplayName: params.artistDisplayName,
-    albumNames: [
-      ...stage1Payload.rankedAlbums.map((row) => row.name),
-      ...stage1Payload.liveAlbums.map((row) => row.name),
-      ...stage1Payload.bestOfCompilations.map((row) => row.name),
-      ...stage1Payload.raritiesCompilations.map((row) => row.name),
-    ],
-    trackNames: stage1Payload.topTracks.map((row) => row.title),
+    albumNames,
+    trackNames,
   });
 
   const mergedEvidence = {
