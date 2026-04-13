@@ -22,11 +22,9 @@ export async function retrieveTargetedEnrichmentBuckets(
   | 'retrievalQueries'
   | 'sources'
   | 'artistReferenceCandidates'
-  | 'artistImageCandidates'
   | 'albumReferenceBuckets'
   | 'trackReferenceBuckets'
   | 'referenceCandidates'
-  | 'imageCandidates'
   | 'retrievalDigest'
   | 'warnings'
 >> {
@@ -62,23 +60,9 @@ export async function retrieveTargetedEnrichmentBuckets(
     }
   }
 
-  const dedupedImageCandidates = [];
-  const seenImageUrls = new Set<string>();
-  for (const candidate of targeted.imageCandidates) {
-    if (seenImageUrls.has(candidate.imageUrl)) {
-      continue;
-    }
-    seenImageUrls.add(candidate.imageUrl);
-    dedupedImageCandidates.push(candidate);
-    if (dedupedImageCandidates.length >= MAX_SOURCES * 3) {
-      break;
-    }
-  }
-
   return {
     ...targeted,
     sources: dedupedSources,
     referenceCandidates: dedupedReferenceCandidates,
-    imageCandidates: dedupedImageCandidates,
   };
 }

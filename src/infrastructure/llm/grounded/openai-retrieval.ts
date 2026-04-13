@@ -115,24 +115,6 @@ function collectImageCandidatesFromText(
   }));
 }
 
-function collectImageCandidatesFromSourceUrls(
-  urls: readonly { url: string; title?: string }[],
-  digest: string,
-): { imageUrl: string; title?: string; periodHint?: string }[] {
-  const periodHint = digest.toLowerCase().includes('classic') ? 'classic' : undefined;
-  return urls
-    .filter((row) =>
-      /\.(?:png|jpe?g|webp|gif)(?:$|\?)/iu.test(row.url) ||
-      /\/wiki\/file(?::|%3a)/iu.test(row.url) ||
-      /\/wikipedia\/commons\/thumb\//iu.test(row.url)
-    )
-    .map((row, i) => ({
-      imageUrl: row.url,
-      title: row.title ?? `Image source ${String(i + 1)}`,
-      periodHint,
-    }));
-}
-
 async function runOpenAiWebSearch(params: {
   apiKey: string;
   input: string;
@@ -195,26 +177,18 @@ function buildBucketPrompt(params: {
   ].join('\n');
 }
 
-function buildArtistRefAndHeroImagePrompt(params: {
+function buildArtistReferencePrompt(params: {
   artistDisplayName: string;
   artistQueries: readonly string[];
-  imageQueries: readonly string[];
 }): string {
   return [
-    'You are a research assistant. Use web search to find current, verifiable information for BOTH parts below.',
+    'You are a research assistant. Use web search to find current, verifiable artist references.',
     `Artist: ${params.artistDisplayName}`,
     '',
-    'Part A — primary artist reference:',
     'Find the best artist or band biography / overview pages.',
     'Reject album, EP, discography, and song pages.',
     'Reply in plain prose and include useful page URLs in the text when relevant.',
     `Search ideas: ${params.artistQueries.join(' | ')}`,
-    '',
-    'Part B — artist hero image:',
-    'Find image or media pages that could provide a classic-period artist photo.',
-    'Prefer Wikimedia Commons file pages or direct upload.wikimedia.org image assets.',
-    'When possible, include direct https image URLs in the prose, especially from Wikimedia image hosts.',
-    `Search ideas: ${params.imageQueries.join(' | ')}`,
   ].join('\n');
 }
 
@@ -226,11 +200,9 @@ export async function retrieveTargetedEnrichmentBucketsOpenAi(params: {
 }): Promise<{
   retrievalQueries: string[];
   artistReferenceCandidates: Awaited<ReturnType<typeof createReferenceCandidate>>[];
-  artistImageCandidates: Awaited<ReturnType<typeof createImageCandidate>>[];
   albumReferenceBuckets: { targetName: string; candidates: Awaited<ReturnType<typeof createReferenceCandidate>>[] }[];
   trackReferenceBuckets: { targetName: string; candidates: Awaited<ReturnType<typeof createReferenceCandidate>>[] }[];
   referenceCandidates: Awaited<ReturnType<typeof createReferenceCandidate>>[];
-  imageCandidates: Awaited<ReturnType<typeof createImageCandidate>>[];
   sources: ReturnType<typeof createSourceFromReferenceCandidate>[];
   retrievalDigest: string;
   warnings: string[];
@@ -243,22 +215,15 @@ export async function retrieveTargetedEnrichmentBucketsOpenAi(params: {
     `${params.artistDisplayName} official site`,
     `${params.artistDisplayName} britannica`,
   ];
-  const imageQueries = [
-    `${params.artistDisplayName} classic era photo`,
-    `${params.artistDisplayName} iconic photo`,
-    `${params.artistDisplayName} early live photo`,
-    `${params.artistDisplayName} site:wikimedia.org`,
-  ];
-  const combinedArtistAndImageSearch = await runOpenAiWebSearch({
+  const artistSearch = await runOpenAiWebSearch({
     apiKey: params.apiKey,
-    input: buildArtistRefAndHeroImagePrompt({
+    input: buildArtistReferencePrompt({
       artistDisplayName: params.artistDisplayName,
       artistQueries,
-      imageQueries,
     }),
   });
-  retrievalQueries.push(...artistQueries, ...imageQueries);
-  const artistReferenceCandidates = combinedArtistAndImageSearch.urls
+  retrievalQueries.push(...artistQueries);
+  const artistReferenceCandidates = artistSearch.urls
     .slice(0, MAX_SOURCES)
     .map((u, i) =>
       createReferenceCandidate({
@@ -270,30 +235,6 @@ export async function retrieveTargetedEnrichmentBucketsOpenAi(params: {
         appliesToName: params.artistDisplayName,
       }),
     );
-
-  const digestImageCandidates = collectImageCandidatesFromText(combinedArtistAndImageSearch.digest);
-  const sourceImageCandidates = collectImageCandidatesFromSourceUrls(
-    combinedArtistAndImageSearch.urls,
-    combinedArtistAndImageSearch.digest,
-  );
-  const rawImageCandidates = [...sourceImageCandidates, ...digestImageCandidates]
-    .slice(0, MAX_SOURCES * 2);
-  const artistImageCandidates = rawImageCandidates
-    .flatMap((u, i) => {
-      try {
-        return [
-          createImageCandidate({
-            candidateId: `openai-artist-img-${String(i)}`,
-            imageUrl: u.imageUrl,
-            title: u.title,
-            periodHint: u.periodHint,
-            sourceProvider: 'openai',
-          }),
-        ];
-      } catch {
-        return [];
-      }
-    });
 
   type PooledTask =
     | { kind: 'album'; targetName: string }
@@ -400,12 +341,11 @@ export async function retrieveTargetedEnrichmentBucketsOpenAi(params: {
     ...albumReferenceBuckets.flatMap((bucket) => bucket.candidates),
     ...trackReferenceBuckets.flatMap((bucket) => bucket.candidates),
   ];
-  const imageCandidates = [...artistImageCandidates];
   const sources = referenceCandidates.map((candidate) =>
     createSourceFromReferenceCandidate(candidate, new Date()),
   );
   const retrievalDigest = [
-    combinedArtistAndImageSearch.digest,
+    artistSearch.digest,
     ...albumReferenceBuckets.map((bucket) =>
       `${bucket.targetName}: ${bucket.candidates.map((candidate) => candidate.url).join(' ')}`,
     ),
@@ -420,18 +360,13 @@ export async function retrieveTargetedEnrichmentBucketsOpenAi(params: {
   if (artistReferenceCandidates.length === 0) {
     warnings.push('Targeted artist reference retrieval returned no structured candidates.');
   }
-  if (artistImageCandidates.length === 0) {
-    warnings.push('Targeted artist image retrieval returned no structured image candidates.');
-  }
 
   return {
     retrievalQueries,
     artistReferenceCandidates,
-    artistImageCandidates,
     albumReferenceBuckets,
     trackReferenceBuckets,
     referenceCandidates,
-    imageCandidates,
     sources,
     retrievalDigest,
     warnings,

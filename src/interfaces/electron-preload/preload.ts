@@ -27,6 +27,8 @@ contextBridge.exposeInMainWorld('deepcut', {
   getArtistEnrichment: async (p: unknown) => ipcRenderer.invoke(IPC_CHANNELS.getArtistEnrichment, p),
   refreshArtistEnrichment: async (p: unknown) =>
     ipcRenderer.invoke(IPC_CHANNELS.refreshArtistEnrichment, p),
+  getArtistImage: async (p: unknown) => ipcRenderer.invoke(IPC_CHANNELS.getArtistImage, p),
+  refreshArtistImage: async (p: unknown) => ipcRenderer.invoke(IPC_CHANNELS.refreshArtistImage, p),
   resolvePlaybackArtistForEnrichment: async (p: unknown) =>
     ipcRenderer.invoke(IPC_CHANNELS.resolvePlaybackArtistForEnrichment, p),
   llmPing: async () =>

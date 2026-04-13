@@ -9,9 +9,15 @@ import type { AppSettings } from '../../domain/schemas/app-settings.js';
 import type { Playlist } from '../../domain/schemas/playlist.js';
 import { playlistSchema } from '../../domain/schemas/playlist.js';
 import { scanLocalFolder } from '../../infrastructure/local-library/scan-local-folder.js';
+import { resolveArtistImageFromPublicSources } from '../../infrastructure/artist-images/resolve-artist-image.js';
+import {
+  getArtistImageWithCache,
+  refreshArtistImageCache,
+} from '../../infrastructure/artist-images/artist-image-cache-lookup.js';
 import { getMongoClient } from '../../infrastructure/persistence/mongo-client.js';
 import { MongoAppSettingsRepository } from '../../infrastructure/persistence/mongo-app-settings-repository.js';
 import { MongoArtistEnrichmentRepository } from '../../infrastructure/persistence/mongo-artist-enrichment-repository.js';
+import { MongoArtistImageRepository } from '../../infrastructure/persistence/mongo-artist-image-repository.js';
 import { MongoLocalTrackRepository } from '../../infrastructure/persistence/mongo-local-track-repository.js';
 import { MongoPlaybackSessionRepository } from '../../infrastructure/persistence/mongo-playback-session-repository.js';
 import { MongoPlaylistRepository } from '../../infrastructure/persistence/mongo-playlist-repository.js';
@@ -553,6 +559,59 @@ export function registerIpcHandlers(params: {
       return { kind: 'stale' as const, cached };
     }
     return { kind: 'hit' as const, cached };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.getArtistImage, async (_e, raw: unknown) => {
+    const parsed = artistEnrichmentPayload.safeParse(raw);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid artist payload');
+    }
+    const uri = getMongoUri();
+    const client = await getMongoClient(uri);
+    const db = client.db();
+    const repo = new MongoArtistImageRepository(db.collection(MongoArtistImageRepository.collectionName));
+    try {
+      const result = await getArtistImageWithCache({
+        repository: repo,
+        resolveArtistImage: resolveArtistImageFromPublicSources,
+        enrichmentArtistKey: parsed.data.enrichmentArtistKey,
+        artistDisplayName: parsed.data.artistName,
+      });
+      return result;
+    } catch (error) {
+      logWarn('Artist image lookup failed', {
+        enrichmentArtistKey: parsed.data.enrichmentArtistKey,
+        error: String(error),
+      });
+      return { kind: 'miss' as const };
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.refreshArtistImage, async (_e, raw: unknown) => {
+    const parsed = artistEnrichmentPayload.safeParse(raw);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid artist payload');
+    }
+    const uri = getMongoUri();
+    const client = await getMongoClient(uri);
+    const db = client.db();
+    const repo = new MongoArtistImageRepository(db.collection(MongoArtistImageRepository.collectionName));
+    try {
+      const cached = await refreshArtistImageCache({
+        repository: repo,
+        resolveArtistImage: resolveArtistImageFromPublicSources,
+        enrichmentArtistKey: parsed.data.enrichmentArtistKey,
+        artistDisplayName: parsed.data.artistName,
+      });
+      return { ok: true as const, cached };
+    } catch (error) {
+      logWarn('Artist image refresh failed', {
+        enrichmentArtistKey: parsed.data.enrichmentArtistKey,
+        error: String(error),
+      });
+      const fallbackCached = await repo.get(parsed.data.enrichmentArtistKey);
+      return { ok: true as const, cached: fallbackCached };
+    }
   });
 
   ipcMain.handle(IPC_CHANNELS.refreshArtistEnrichment, async (_e, raw: unknown) => {

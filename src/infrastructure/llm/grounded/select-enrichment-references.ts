@@ -92,7 +92,6 @@ export async function selectEnrichmentReferencesFromBuckets(params: {
     'For album and track rows, leave the candidate null if the bucket lacks a clearly item-specific page.',
     'For album/track rows, strongly prefer item-specific Wikipedia candidates when available and clearly matched.',
     'For the artist heading, choose only from artistReferenceCandidates.',
-    'For the hero image, choose only from artistImageCandidates.',
     '',
     'artistReferenceCandidates:',
     JSON.stringify(
@@ -101,16 +100,6 @@ export async function selectEnrichmentReferencesFromBuckets(params: {
         title: candidate.title,
         host: candidate.host,
         candidateKind: candidate.candidateKind,
-      })),
-    ),
-    '',
-    'artistImageCandidates:',
-    JSON.stringify(
-      params.evidence.artistImageCandidates.map((candidate) => ({
-        candidateId: candidate.candidateId,
-        title: candidate.title,
-        host: candidate.host,
-        periodHint: candidate.periodHint,
       })),
     ),
     '',
@@ -146,7 +135,6 @@ export async function selectEnrichmentReferencesFromBuckets(params: {
     '',
     'Return JSON with exactly these keys:',
     '- artistPrimaryReferenceCandidateId',
-    '- artistHeroImageCandidateId',
     '- albumSelections: array of { targetName, primaryReferenceCandidateId? }',
     '- trackSelections: array of { targetName, primaryReferenceCandidateId? }',
   ].join('\n');

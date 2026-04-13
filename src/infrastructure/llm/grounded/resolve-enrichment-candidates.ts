@@ -1,6 +1,5 @@
 import type {
   ArtistEvidenceBundle,
-  EvidenceImageCandidate,
   EvidenceReferenceCandidate,
   EvidenceTargetReferenceBucket,
 } from '../../../domain/schemas/artist-evidence.js';
@@ -15,7 +14,6 @@ import type {
   ArtistReferenceSelection,
   EnrichmentCategorizedAlbumEntrySelection,
 } from '../../../domain/schemas/artist-enrichment-payload.js';
-import { rankImageCandidates } from '../../../shared/rank-image-candidates.js';
 import { rankReferenceCandidates } from '../../../shared/rank-reference-candidates.js';
 import { normalizeArtistNameForEnrichmentKey } from '../../../shared/normalize-artist-name-for-enrichment-key.js';
 
@@ -27,12 +25,6 @@ type AnySelectionRow =
 function referenceMap(
   candidates: readonly EvidenceReferenceCandidate[],
 ): ReadonlyMap<string, EvidenceReferenceCandidate> {
-  return new Map(candidates.map((candidate) => [candidate.candidateId, candidate]));
-}
-
-function imageMap(
-  candidates: readonly EvidenceImageCandidate[],
-): ReadonlyMap<string, EvidenceImageCandidate> {
   return new Map(candidates.map((candidate) => [candidate.candidateId, candidate]));
 }
 
@@ -80,32 +72,6 @@ function resolveReference(
     candidateId: preferred.candidateId,
     url: preferred.url,
     title: preferred.title,
-    host: preferred.host,
-    trustTier: preferred.trustTier,
-  };
-}
-
-function resolveHeroImage(
-  candidates: readonly EvidenceImageCandidate[],
-  artistDisplayName: string,
-  selectedCandidateId: string | null | undefined,
-): ArtistEnrichmentPayload['artistHeroImage'] | undefined {
-  const ranked = rankImageCandidates(candidates, artistDisplayName);
-  const candidateById = imageMap(candidates);
-  const preferred = selectedCandidateId != null ? candidateById.get(selectedCandidateId) : ranked[0];
-  if (preferred == null) {
-    return undefined;
-  }
-  const isEligible = ranked.some((candidate) => candidate.candidateId === preferred.candidateId);
-  if (!isEligible) {
-    return undefined;
-  }
-  return {
-    candidateId: preferred.candidateId,
-    imageUrl: preferred.imageUrl,
-    sourcePageUrl: preferred.sourcePageUrl,
-    title: preferred.title,
-    periodHint: preferred.periodHint,
     host: preferred.host,
     trustTier: preferred.trustTier,
   };
@@ -180,13 +146,7 @@ export function resolveSelectionPayloadToEnrichmentPayload(
       resolveRankedRow(findBucket(evidence.albumReferenceBuckets, row.name), row, 'album'),
     ),
     bandMembers: selection.bandMembers,
-    artistHeroImage:
-      resolveHeroImage(
-        evidence.artistImageCandidates,
-        evidence.artistDisplayName,
-        referenceSelection.artistHeroImageCandidateId,
-      ) ??
-      undefined,
+    artistHeroImage: undefined,
   };
 }
 
@@ -271,11 +231,6 @@ export function applyReferenceSelectionToPayload(
       ...row,
       primaryReference: undefined,
     })),
-    artistHeroImage:
-      resolveHeroImage(
-        evidence.artistImageCandidates,
-        evidence.artistDisplayName,
-        referenceSelection.artistHeroImageCandidateId,
-      ) ?? undefined,
+    artistHeroImage: undefined,
   };
 }

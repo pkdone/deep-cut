@@ -11,7 +11,7 @@ const tenTopTracks = Array.from({ length: 10 }, (_, i) => ({
 }));
 
 describe('parseArtistInsightsDocument', () => {
-  it('migrates v4 documents to insights record shape', () => {
+  it('parses current insights records', () => {
     const raw = {
       enrichmentArtistKey: 'key1',
       artistName: 'Artist',
@@ -25,13 +25,22 @@ describe('parseArtistInsightsDocument', () => {
         bandMembers: [],
         artistHeroImage: undefined,
       },
+      partialPayload: undefined,
+      validationStatus: 'valid',
+      warnings: [],
       cachedAt: new Date().toISOString(),
       provider: 'openai',
-      docSchemaVersion: 4,
+      docSchemaVersion: 8,
+      evidence: undefined,
+      retrievalModel: undefined,
+      synthesisModel: undefined,
+      lastRetrievalAt: undefined,
+      lastSynthesisAt: undefined,
+      primaryReference: undefined,
     };
     const r = parseArtistInsightsDocument(raw);
     expect(r.validationStatus).toBe('valid');
-    expect(r.docSchemaVersion).toBe(4);
+    expect(r.docSchemaVersion).toBe(8);
     expect(r.payload?.synopsis).toBe(synopsis320);
   });
 });
