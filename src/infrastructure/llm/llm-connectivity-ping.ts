@@ -1,8 +1,8 @@
 import { ExternalServiceError } from '../../shared/errors.js';
 import { ANTHROPIC_MESSAGES_MODEL } from './anthropic-messages-model.js';
 
-/** Same model family as grounded enrichment synthesis ([`fetch-artist-enrichment`](./fetch-artist-enrichment.ts)). */
-const OPENAI_PING_MODEL = 'gpt-4.1-mini';
+/** Minimal-cost model for connectivity checks only. */
+const OPENAI_PING_MODEL = 'gpt-5-nano';
 
 /**
  * Minimal Chat Completions request to verify the API key and network path.

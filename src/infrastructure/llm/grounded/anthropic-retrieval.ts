@@ -3,6 +3,7 @@ import { artistEvidenceBundleSchema } from '../../../domain/schemas/artist-evide
 import { ANTHROPIC_MESSAGES_MODEL } from '../anthropic-messages-model.js';
 import { logWarn } from '../../../shared/app-logger.js';
 import { ExternalServiceError } from '../../../shared/errors.js';
+import { mapAsyncPool } from '../../../shared/map-async-pool.js';
 import {
   MAX_RETRIEVAL_DIGEST_CHARS,
   MAX_SNIPPET_CHARS,
@@ -18,6 +19,9 @@ const WEB_SEARCH_TOOL = {
   type: 'web_search_20250305',
   name: 'web_search',
 } as const;
+
+/** Max concurrent album/track web search calls in stage-2 targeted retrieval. Tune down if providers rate-limit. */
+const TARGETED_BUCKET_RETRIEVAL_CONCURRENCY = 4;
 
 function buildQueries(artistDisplayName: string): string[] {
   return [
@@ -156,6 +160,29 @@ function buildBucketPrompt(params: {
   ].join('\n');
 }
 
+function buildArtistRefAndHeroImagePrompt(params: {
+  artistDisplayName: string;
+  artistQueries: readonly string[];
+  imageQueries: readonly string[];
+}): string {
+  return [
+    'Use web search to find current information for BOTH parts below.',
+    `Artist: ${params.artistDisplayName}`,
+    '',
+    'Part A — primary artist reference:',
+    'Find the best artist or band biography / overview pages.',
+    'Reject album, EP, discography, and song pages.',
+    'Reply in plain prose and include useful page URLs inline when relevant.',
+    `Search ideas: ${params.artistQueries.join(' | ')}`,
+    '',
+    'Part B — artist hero image:',
+    'Find image or media pages that could provide a classic-period artist photo.',
+    'Prefer Wikimedia Commons file pages or direct upload.wikimedia.org image assets.',
+    'When possible, include direct https image URLs inline in the prose.',
+    `Search ideas: ${params.imageQueries.join(' | ')}`,
+  ].join('\n');
+}
+
 export async function retrieveTargetedEnrichmentBucketsAnthropic(params: {
   apiKey: string;
   artistDisplayName: string;
@@ -181,55 +208,36 @@ export async function retrieveTargetedEnrichmentBucketsAnthropic(params: {
     `${params.artistDisplayName} official site`,
     `${params.artistDisplayName} britannica`,
   ];
-  const artistSearch = await runAnthropicWebSearch({
-    apiKey: params.apiKey,
-    prompt: buildBucketPrompt({
-      artistDisplayName: params.artistDisplayName,
-      targetLabel: 'artist primary reference',
-      queries: artistQueries,
-      instructions: [
-        'Find the best artist or band biography / overview pages.',
-        'Reject album, EP, discography, and song pages.',
-        'Reply in plain prose and include useful page URLs inline when relevant.',
-      ],
-    }),
-  });
-  retrievalQueries.push(...artistQueries);
-  const artistReferenceCandidates = artistSearch.urls.map((u, i) =>
-    createReferenceCandidate({
-      candidateId: `anthropic-artist-ref-${String(i)}`,
-      url: u.url,
-      title: u.title,
-      snippet: artistSearch.digest.slice(0, MAX_SNIPPET_CHARS),
-      sourceProvider: 'anthropic',
-      appliesToName: params.artistDisplayName,
-    }),
-  );
-
   const imageQueries = [
     `${params.artistDisplayName} classic era photo`,
     `${params.artistDisplayName} iconic photo`,
     `${params.artistDisplayName} early live photo`,
     `${params.artistDisplayName} site:wikimedia.org`,
   ];
-  const imageSearch = await runAnthropicWebSearch({
+  const combinedArtistAndImageSearch = await runAnthropicWebSearch({
     apiKey: params.apiKey,
-    prompt: buildBucketPrompt({
+    prompt: buildArtistRefAndHeroImagePrompt({
       artistDisplayName: params.artistDisplayName,
-      targetLabel: 'artist hero image',
-      queries: imageQueries,
-      instructions: [
-        'Find image or media pages that could provide a classic-period artist photo.',
-        'Prefer Wikimedia Commons file pages or direct upload.wikimedia.org image assets.',
-        'When possible, include direct https image URLs inline in the prose.',
-      ],
+      artistQueries,
+      imageQueries,
     }),
   });
-  retrievalQueries.push(...imageQueries);
-  const digestImageCandidates = collectImageCandidatesFromDigest(imageSearch.digest);
+  retrievalQueries.push(...artistQueries, ...imageQueries);
+  const artistReferenceCandidates = combinedArtistAndImageSearch.urls.map((u, i) =>
+    createReferenceCandidate({
+      candidateId: `anthropic-artist-ref-${String(i)}`,
+      url: u.url,
+      title: u.title,
+      snippet: combinedArtistAndImageSearch.digest.slice(0, MAX_SNIPPET_CHARS),
+      sourceProvider: 'anthropic',
+      appliesToName: params.artistDisplayName,
+    }),
+  );
+
+  const digestImageCandidates = collectImageCandidatesFromDigest(combinedArtistAndImageSearch.digest);
   const sourceImageCandidates = collectImageCandidatesFromSourceUrls(
-    imageSearch.urls,
-    imageSearch.digest,
+    combinedArtistAndImageSearch.urls,
+    combinedArtistAndImageSearch.digest,
   );
   const rawImageCandidates = [...sourceImageCandidates, ...digestImageCandidates]
     .slice(0, MAX_SOURCES * 2);
@@ -249,46 +257,56 @@ export async function retrieveTargetedEnrichmentBucketsAnthropic(params: {
     },
   ).filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== null);
 
-  const albumReferenceBuckets = [];
-  for (const albumName of params.albumNames) {
-    const queries = [
-      `${params.artistDisplayName} ${albumName}`,
-      `${params.artistDisplayName} ${albumName} wikipedia`,
-      `${params.artistDisplayName} ${albumName} site:discogs.com`,
-      `${params.artistDisplayName} ${albumName} site:allmusic.com`,
-    ];
-    const search = await runAnthropicWebSearch({
-      apiKey: params.apiKey,
-      prompt: buildBucketPrompt({
-        artistDisplayName: params.artistDisplayName,
-        targetLabel: `album reference for ${albumName}`,
-        queries,
-        instructions: [
-          'Find pages specifically about this album or release.',
-          'Prefer item-specific Wikipedia pages when available; otherwise use Discogs, AllMusic, or official pages.',
-          'Do not prefer generic artist biography or discography pages when an album-specific page exists.',
-          'Reply in plain prose and include useful page URLs inline when relevant.',
-        ],
-      }),
-    });
-    retrievalQueries.push(...queries);
-    albumReferenceBuckets.push({
-      targetName: albumName,
-      candidates: search.urls.map((u, i) =>
-        createReferenceCandidate({
-          candidateId: `anthropic-album-${albumName}-${String(i)}`,
-          url: u.url,
-          title: u.title,
-          snippet: search.digest.slice(0, MAX_SNIPPET_CHARS),
-          sourceProvider: 'anthropic',
-          appliesToName: albumName,
-        }),
-      ),
-    });
-  }
+  type PooledTask =
+    | { kind: 'album'; targetName: string }
+    | { kind: 'track'; targetName: string };
 
-  const trackReferenceBuckets = [];
-  for (const trackName of params.trackNames) {
+  const pooledTasks: PooledTask[] = [
+    ...params.albumNames.map((targetName) => ({ kind: 'album' as const, targetName })),
+    ...params.trackNames.map((targetName) => ({ kind: 'track' as const, targetName })),
+  ];
+
+  const pooledResults = await mapAsyncPool(pooledTasks, TARGETED_BUCKET_RETRIEVAL_CONCURRENCY, async (task) => {
+    if (task.kind === 'album') {
+      const albumName = task.targetName;
+      const queries = [
+        `${params.artistDisplayName} ${albumName}`,
+        `${params.artistDisplayName} ${albumName} wikipedia`,
+        `${params.artistDisplayName} ${albumName} site:discogs.com`,
+        `${params.artistDisplayName} ${albumName} site:allmusic.com`,
+      ];
+      const search = await runAnthropicWebSearch({
+        apiKey: params.apiKey,
+        prompt: buildBucketPrompt({
+          artistDisplayName: params.artistDisplayName,
+          targetLabel: `album reference for ${albumName}`,
+          queries,
+          instructions: [
+            'Find pages specifically about this album or release.',
+            'Prefer item-specific Wikipedia pages when available; otherwise use Discogs, AllMusic, or official pages.',
+            'Do not prefer generic artist biography or discography pages when an album-specific page exists.',
+            'Reply in plain prose and include useful page URLs inline when relevant.',
+          ],
+        }),
+      });
+      return {
+        kind: 'album' as const,
+        targetName: albumName,
+        queries,
+        candidates: search.urls.map((u, i) =>
+          createReferenceCandidate({
+            candidateId: `anthropic-album-${albumName}-${String(i)}`,
+            url: u.url,
+            title: u.title,
+            snippet: search.digest.slice(0, MAX_SNIPPET_CHARS),
+            sourceProvider: 'anthropic',
+            appliesToName: albumName,
+          }),
+        ),
+      };
+    }
+
+    const trackName = task.targetName;
     const queries = [
       `${params.artistDisplayName} ${trackName}`,
       `${params.artistDisplayName} ${trackName} wikipedia`,
@@ -308,9 +326,10 @@ export async function retrieveTargetedEnrichmentBucketsAnthropic(params: {
         ],
       }),
     });
-    retrievalQueries.push(...queries);
-    trackReferenceBuckets.push({
+    return {
+      kind: 'track' as const,
       targetName: trackName,
+      queries,
       candidates: search.urls.map((u, i) =>
         createReferenceCandidate({
           candidateId: `anthropic-track-${trackName}-${String(i)}`,
@@ -321,8 +340,22 @@ export async function retrieveTargetedEnrichmentBucketsAnthropic(params: {
           appliesToName: trackName,
         }),
       ),
-    });
+    };
+  });
+
+  for (const row of pooledResults) {
+    retrievalQueries.push(...row.queries);
   }
+
+  const albumCount = params.albumNames.length;
+  const albumReferenceBuckets = pooledResults.slice(0, albumCount).map((row) => ({
+    targetName: row.targetName,
+    candidates: row.candidates,
+  }));
+  const trackReferenceBuckets = pooledResults.slice(albumCount).map((row) => ({
+    targetName: row.targetName,
+    candidates: row.candidates,
+  }));
 
   const referenceCandidates = [
     ...artistReferenceCandidates,
@@ -334,8 +367,7 @@ export async function retrieveTargetedEnrichmentBucketsAnthropic(params: {
     createSourceFromReferenceCandidate(candidate, new Date()),
   );
   const retrievalDigest = [
-    artistSearch.digest,
-    imageSearch.digest,
+    combinedArtistAndImageSearch.digest,
     ...albumReferenceBuckets.map((bucket) =>
       `${bucket.targetName}: ${bucket.candidates.map((candidate) => candidate.url).join(' ')}`,
     ),
