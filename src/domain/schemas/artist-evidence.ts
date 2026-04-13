@@ -1,5 +1,12 @@
 import { z } from 'zod';
 import { enrichmentArtistKeySchema } from './artist-enrichment-payload.js';
+import {
+  enrichmentCandidateAppliesToTypeSchema,
+  enrichmentCandidateIdSchema,
+  enrichmentCandidateSourceProviderSchema,
+  enrichmentCandidateTrustTierSchema,
+  enrichmentReferenceCandidateKindSchema,
+} from './artist-enrichment-reference.js';
 
 /** One cited or retrieved web item after normalization. */
 export const evidenceSourceSchema = z.object({
@@ -13,12 +20,48 @@ export const evidenceSourceSchema = z.object({
   snippet: z.string().max(8000),
   ratingValue: z.number().nullish(),
   ratingScale: z.string().nullish(),
-  appliesToType: z.enum(['artist', 'album', 'track', 'unknown']).nullish(),
+  appliesToType: enrichmentCandidateAppliesToTypeSchema.nullish(),
   appliesToName: z.string().nullish(),
   confidence: z.number().min(0).max(1).nullish(),
 });
 
 export type EvidenceSource = z.infer<typeof evidenceSourceSchema>;
+
+export const evidenceReferenceCandidateSchema = z.object({
+  candidateId: enrichmentCandidateIdSchema,
+  url: z.string().url(),
+  title: z.string().nullish(),
+  host: z.string().min(1),
+  candidateKind: enrichmentReferenceCandidateKindSchema,
+  appliesToType: enrichmentCandidateAppliesToTypeSchema,
+  appliesToName: z.string().nullish(),
+  trustTier: enrichmentCandidateTrustTierSchema,
+  sourceProvider: enrichmentCandidateSourceProviderSchema,
+  snippet: z.string().max(8000).nullish(),
+});
+
+export type EvidenceReferenceCandidate = z.infer<typeof evidenceReferenceCandidateSchema>;
+
+export const evidenceImageCandidateSchema = z.object({
+  candidateId: enrichmentCandidateIdSchema,
+  imageUrl: z.string().url(),
+  sourcePageUrl: z.string().url().nullish(),
+  title: z.string().nullish(),
+  host: z.string().min(1),
+  periodHint: z.string().nullish(),
+  trustTier: enrichmentCandidateTrustTierSchema,
+  sourceProvider: enrichmentCandidateSourceProviderSchema,
+  altText: z.string().nullish(),
+});
+
+export type EvidenceImageCandidate = z.infer<typeof evidenceImageCandidateSchema>;
+
+export const evidenceTargetReferenceBucketSchema = z.object({
+  targetName: z.string().min(1),
+  candidates: z.array(evidenceReferenceCandidateSchema).max(40),
+});
+
+export type EvidenceTargetReferenceBucket = z.infer<typeof evidenceTargetReferenceBucketSchema>;
 
 export const artistEvidenceRetrievalStatusSchema = z.enum(['ok', 'degraded', 'failed']);
 
@@ -30,8 +73,14 @@ export const artistEvidenceBundleSchema = z.object({
   artistDisplayName: z.string().min(1),
   requestedAt: z.coerce.date(),
   retrievalProvider: z.enum(['openai', 'anthropic']),
-  retrievalQueries: z.array(z.string()).max(32),
-  sources: z.array(evidenceSourceSchema).max(80),
+  retrievalQueries: z.array(z.string()).max(256),
+  sources: z.array(evidenceSourceSchema).max(240),
+  artistReferenceCandidates: z.array(evidenceReferenceCandidateSchema).max(40),
+  artistImageCandidates: z.array(evidenceImageCandidateSchema).max(20),
+  albumReferenceBuckets: z.array(evidenceTargetReferenceBucketSchema).max(80),
+  trackReferenceBuckets: z.array(evidenceTargetReferenceBucketSchema).max(80),
+  referenceCandidates: z.array(evidenceReferenceCandidateSchema).max(320),
+  imageCandidates: z.array(evidenceImageCandidateSchema).max(120),
   /** Condensed factual bullets or paragraph fragments from evidence (optional). */
   normalizedSynopsisFacts: z.array(z.string()).max(200),
   normalizedAlbumHints: z
@@ -50,7 +99,7 @@ export const artistEvidenceBundleSchema = z.object({
       })
     )
     .max(80),
-  warnings: z.array(z.string()).max(50),
+  warnings: z.array(z.string()).max(100),
   status: artistEvidenceRetrievalStatusSchema,
   /** Raw retrieval text for synthesis (capped in infrastructure). */
   retrievalDigest: z.string().max(120_000),

@@ -26,6 +26,7 @@ export function parseArtistInsightsDocument(raw: unknown): ArtistInsightsRecord 
       synthesisModel: undefined,
       lastRetrievalAt: undefined,
       lastSynthesisAt: undefined,
+      primaryReference: undefined,
     };
   }
 

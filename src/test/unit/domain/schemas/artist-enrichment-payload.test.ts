@@ -10,6 +10,7 @@ const tenTopTracks = Array.from({ length: 10 }, (_, i) => ({
   title: `Song ${String(i + 1)}`,
   rank: i + 1,
   releaseYear: 1990 + i,
+  primaryReference: undefined,
 }));
 
 describe('artistEnrichmentPayloadSchema', () => {
@@ -17,14 +18,16 @@ describe('artistEnrichmentPayloadSchema', () => {
     const parsed = artistEnrichmentPayloadSchema.parse({
       synopsis: synopsis320,
       rankedAlbums: [
-        { name: 'First LP', releaseYear: 1988, rank: 1 },
-        { name: 'Second LP', releaseYear: 1990, rank: 2 },
+        { name: 'First LP', releaseYear: 1988, rank: 1, primaryReference: undefined },
+        { name: 'Second LP', releaseYear: 1990, rank: 2, primaryReference: undefined },
       ],
       topTracks: tenTopTracks,
-      liveAlbums: [{ name: 'Live at the Club', releaseYear: 2001, rank: 1 }],
+      liveAlbums: [
+        { name: 'Live at the Club', releaseYear: 2001, rank: 1, primaryReference: undefined },
+      ],
       bestOfCompilations: [
-        { name: 'Greatest Hits', releaseYear: 2010, rank: 1 },
-        { name: 'Early Years', releaseYear: 2005, rank: 2 },
+        { name: 'Greatest Hits', releaseYear: 2010, rank: 1, primaryReference: undefined },
+        { name: 'Early Years', releaseYear: 2005, rank: 2, primaryReference: undefined },
       ],
       raritiesCompilations: [],
       bandMembers: [
@@ -47,6 +50,7 @@ describe('artistEnrichmentPayloadSchema', () => {
           periods: [{ startYear: 2010, endYear: null }],
         },
       ],
+      artistHeroImage: undefined,
     });
     expect(parsed.liveAlbums[0]?.rank).toBe(1);
     expect(parsed.bandMembers[1]?.periods).toHaveLength(2);
@@ -68,6 +72,7 @@ describe('artistEnrichmentPayloadSchema', () => {
             periods: [{ startYear: 2000, endYear: 2010 }],
           },
         ],
+        artistHeroImage: undefined,
       })
     ).toThrow();
   });
@@ -79,10 +84,10 @@ describe('artistEnrichmentPayloadSchema', () => {
         rankedAlbums: [],
         topTracks: tenTopTracks,
         liveAlbums: [
-          { name: 'A', releaseYear: 2000, rank: 1 },
-          { name: 'B', releaseYear: 2001, rank: 2 },
-          { name: 'C', releaseYear: 2002, rank: 3 },
-          { name: 'D', releaseYear: 2003, rank: 1 },
+          { name: 'A', releaseYear: 2000, rank: 1, primaryReference: undefined },
+          { name: 'B', releaseYear: 2001, rank: 2, primaryReference: undefined },
+          { name: 'C', releaseYear: 2002, rank: 3, primaryReference: undefined },
+          { name: 'D', releaseYear: 2003, rank: 1, primaryReference: undefined },
         ],
         bestOfCompilations: [],
         raritiesCompilations: [],
@@ -93,6 +98,7 @@ describe('artistEnrichmentPayloadSchema', () => {
             periods: [{ startYear: 2000, endYear: 2010 }],
           },
         ],
+        artistHeroImage: undefined,
       })
     ).toThrow();
   });
@@ -113,6 +119,7 @@ describe('artistEnrichmentPayloadSchema', () => {
             periods: [{ startYear: 2000, endYear: 2010 }],
           },
         ],
+        artistHeroImage: undefined,
       })
     ).toThrow();
   });

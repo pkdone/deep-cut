@@ -3,16 +3,17 @@ import {
   type ArtistEnrichmentPartialPayload,
 } from '../../../domain/schemas/artist-insights-record.js';
 import {
-  artistEnrichmentPayloadSchema,
+  artistEnrichmentSelectionPayloadSchema,
   type ArtistEnrichmentPayload,
 } from '../../../domain/schemas/artist-enrichment-payload.js';
 import type { ArtistEvidenceBundle } from '../../../domain/schemas/artist-evidence.js';
 import type { LlmProvider } from '../../../domain/schemas/app-settings.js';
 import { ANTHROPIC_MESSAGES_MODEL } from '../anthropic-messages-model.js';
 import { repairMalformedLlmJsonQuotes } from '../repair-llm-json.js';
-import { logError, logInfo } from '../../../shared/app-logger.js';
+import { logError, logInfo, logWarn } from '../../../shared/app-logger.js';
 import { ExternalServiceError } from '../../../shared/errors.js';
 import { ENRICHMENT_JSON_INSTRUCTION } from './enrichment-json-instruction.js';
+import { normalizeArtistSynthesisJson } from './normalize-artist-synthesis-json.js';
 
 const OPENAI_SYNTHESIS_MODEL = 'gpt-4.1-mini';
 
@@ -121,7 +122,11 @@ export async function synthesizeArtistInsightsFromEvidence(params: {
     'Evidence (from web retrieval; treat as sole factual basis for discography and background):',
     params.evidence.retrievalDigest.slice(0, 100_000),
     '',
-    'Produce JSON only as specified. rankedAlbums must be studio albums only; topTracks must be exactly ten distinct songs with ranks 1–10.',
+    'Ranking policy: rankedAlbums should reflect aggregated consensus from multiple sources in the evidence, not a single source.',
+    'When evidence indicates a finite studio catalog (for example 6-12 core studio albums), include the full core set in rankedAlbums rather than omitting obvious entries.',
+    'When evidence mentions live releases, best-of compilations, or rarities/anthologies, populate those category arrays with at least one entry where appropriate.',
+    '',
+    'Produce JSON only as specified. Do not choose final sources here; only produce the music content and ranking data.',
     '',
     ENRICHMENT_JSON_INSTRUCTION,
   ].join('\n');
@@ -132,21 +137,54 @@ export async function synthesizeArtistInsightsFromEvidence(params: {
       : callAnthropicSynthesis(params.apiKey, userPrompt);
 
   const toResult = (parsed: unknown): SynthesisAttemptResult | null => {
-    const full = artistEnrichmentPayloadSchema.safeParse(parsed);
-    if (full.success) {
-      return { kind: 'full', payload: full.data };
+    const selection = artistEnrichmentSelectionPayloadSchema.safeParse(parsed);
+    if (selection.success) {
+      return {
+        kind: 'full',
+        payload: {
+          ...selection.data,
+          rankedAlbums: selection.data.rankedAlbums.map((row) => ({
+            ...row,
+            primaryReference: undefined,
+          })),
+          topTracks: selection.data.topTracks.map((row) => ({
+            ...row,
+            primaryReference: undefined,
+          })),
+          liveAlbums: selection.data.liveAlbums.map((row) => ({
+            ...row,
+            primaryReference: undefined,
+          })),
+          bestOfCompilations: selection.data.bestOfCompilations.map((row) => ({
+            ...row,
+            primaryReference: undefined,
+          })),
+          raritiesCompilations: selection.data.raritiesCompilations.map((row) => ({
+            ...row,
+            primaryReference: undefined,
+          })),
+          artistHeroImage: undefined,
+        },
+      };
     }
-    const partial = artistEnrichmentPartialPayloadSchema.safeParse(parsed);
+    const partialCandidate = parsed;
+    const partial = artistEnrichmentPartialPayloadSchema.safeParse(partialCandidate);
     if (partial.success) {
       return {
         kind: 'partial',
         payload: partial.data,
         warnings: [
           'Full validation failed; showing partial insights.',
-          ...full.error.issues.map((i) => i.message),
+          ...selection.error.issues.map((i) => i.message),
         ],
       };
     }
+    logWarn('Artist synthesis JSON failed full and partial schema after normalization', {
+      fullIssueCount: selection.error.issues.length,
+      partialIssueCount: partial.error.issues.length,
+      fullSample: selection.error.issues.slice(0, 6).map((i) => i.message),
+      partialSample: partial.error.issues.slice(0, 6).map((i) => i.message),
+    });
     return null;
   };
 
@@ -157,7 +195,8 @@ export async function synthesizeArtistInsightsFromEvidence(params: {
     logInfo('Artist synthesis attempt', { attempt: attempts, provider: params.provider });
     const raw = await callModel();
     const parsed = parseJsonFromModel(raw);
-    const outcome = toResult(parsed);
+    const normalized = normalizeArtistSynthesisJson(parsed);
+    const outcome = toResult(normalized);
     if (outcome !== null) {
       return outcome;
     }

@@ -8,6 +8,7 @@ import {
   enrichmentArtistKeySchema,
   enrichmentCategorizedAlbumEntrySchema,
 } from './artist-enrichment-payload.js';
+import { enrichmentResolvedReferenceSchema } from './artist-enrichment-reference.js';
 
 /** Outcome of validating synthesized JSON against the UI payload schema. */
 export const insightsValidationStatusSchema = z.enum(['valid', 'partial']);
@@ -26,6 +27,7 @@ export const artistEnrichmentPartialPayloadSchema = z.object({
   bestOfCompilations: z.array(enrichmentCategorizedAlbumEntrySchema).max(3),
   raritiesCompilations: z.array(enrichmentCategorizedAlbumEntrySchema).max(3),
   bandMembers: z.array(bandMemberEntrySchema),
+  artistHeroImage: artistEnrichmentPayloadSchema.shape.artistHeroImage,
 });
 
 export type ArtistEnrichmentPartialPayload = z.infer<typeof artistEnrichmentPartialPayloadSchema>;
@@ -52,6 +54,8 @@ export const artistInsightsRecordSchema = z
     synthesisModel: z.string().nullish(),
     lastRetrievalAt: z.coerce.date().nullish(),
     lastSynthesisAt: z.coerce.date().nullish(),
+    /** Best artist-level reference chosen deterministically from retrieval candidates. */
+    primaryReference: enrichmentResolvedReferenceSchema.nullish(),
   })
   .superRefine((data, ctx) => {
     if (data.validationStatus === 'valid' && data.payload == null) {
