@@ -32,10 +32,7 @@ export const artistEnrichmentPartialPayloadSchema = z.object({
 
 export type ArtistEnrichmentPartialPayload = z.infer<typeof artistEnrichmentPartialPayloadSchema>;
 
-/**
- * Persisted aggregate for grounded artist insights (MongoDB `artist_enrichment_cache`).
- * Replaces the legacy flat cache row for docSchemaVersion >= 5.
- */
+/** Persisted aggregate for grounded artist insights (MongoDB `artist_enrichment_cache`). */
 export const artistInsightsRecordSchema = z
   .object({
     enrichmentArtistKey: enrichmentArtistKeySchema,
@@ -79,15 +76,3 @@ export const artistInsightsRecordSchema = z
   });
 
 export type ArtistInsightsRecord = z.infer<typeof artistInsightsRecordSchema>;
-
-/** Legacy v4 document shape (single strict payload, no grounded fields). */
-export const artistEnrichmentCacheV4Schema = z.object({
-  enrichmentArtistKey: enrichmentArtistKeySchema,
-  artistName: z.string().min(1),
-  payload: artistEnrichmentPayloadSchema,
-  cachedAt: z.coerce.date(),
-  provider: z.enum(['openai', 'anthropic']),
-  docSchemaVersion: z.literal(4),
-});
-
-export type ArtistEnrichmentCacheV4 = z.infer<typeof artistEnrichmentCacheV4Schema>;

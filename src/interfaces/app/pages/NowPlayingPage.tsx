@@ -96,6 +96,7 @@ export function NowPlayingPage(): ReactElement {
   const [offlineMsg, setOfflineMsg] = useState(false);
   const [loadingInsight, setLoadingInsight] = useState(false);
   const [displayName, setDisplayName] = useState<string | null>(null);
+  const [artistImageUrl, setArtistImageUrl] = useState<string | null>(null);
   const [refreshBusy, setRefreshBusy] = useState(false);
   const [heroImageFailed, setHeroImageFailed] = useState(false);
 
@@ -108,6 +109,7 @@ export function NowPlayingPage(): ReactElement {
       setOfflineMsg(false);
       setLoadingInsight(false);
       setDisplayName(null);
+      setArtistImageUrl(null);
       setHeroImageFailed(false);
       return undefined;
     }
@@ -122,6 +124,7 @@ export function NowPlayingPage(): ReactElement {
       setEnrichErr(null);
       setOfflineMsg(false);
       setDisplayName(null);
+      setArtistImageUrl(null);
     }
 
     const runId = ++insightFetchRunIdRef.current;
@@ -139,6 +142,18 @@ export function NowPlayingPage(): ReactElement {
       }
       setResolutionError(null);
       setDisplayName(resolved.displayName);
+      const imageResult = await window.deepcut.getArtistImage({
+        enrichmentArtistKey: resolved.enrichmentArtistKey,
+        artistName: resolved.displayName,
+      });
+      if (insightFetchRunIdRef.current !== runId) {
+        return;
+      }
+      if (imageResult.kind === 'hit') {
+        setArtistImageUrl(imageResult.cached.imageUrl);
+      } else {
+        setArtistImageUrl(null);
+      }
       const r = await window.deepcut.getArtistEnrichment({
         enrichmentArtistKey: resolved.enrichmentArtistKey,
         artistName: resolved.displayName,
@@ -212,12 +227,7 @@ export function NowPlayingPage(): ReactElement {
       ? enrich.primaryReference.url
       : null;
 
-  const heroImageUrl =
-    insightBody != null &&
-    insightBody.artistHeroImage != null &&
-    insightBody.artistHeroImage.imageUrl.length > 0
-      ? insightBody.artistHeroImage.imageUrl
-      : null;
+  const heroImageUrl = artistImageUrl;
   const showHeroPlaceholder = heroImageUrl === null || heroImageFailed;
   const heroVisual = heroImageUrl !== null && !heroImageFailed ? (
     <img
@@ -244,7 +254,7 @@ export function NowPlayingPage(): ReactElement {
 
   useEffect(() => {
     setHeroImageFailed(false);
-  }, [enrich]);
+  }, [artistImageUrl]);
 
   useEffect(() => {
     if (enrich == null || insightBody == null) {
@@ -302,6 +312,11 @@ export function NowPlayingPage(): ReactElement {
                         artistName: resolved.displayName,
                       });
                       setEnrich(r.cached as ArtistEnrichmentCache | null);
+                      const img = await window.deepcut.refreshArtistImage({
+                        enrichmentArtistKey: resolved.enrichmentArtistKey,
+                        artistName: resolved.displayName,
+                      });
+                      setArtistImageUrl(img.cached?.imageUrl ?? null);
                     } catch (e) {
                       setEnrichErr(String(e));
                     } finally {

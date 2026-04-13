@@ -16,6 +16,11 @@ export interface ArtistEnrichmentPayload {
   artistName: string;
 }
 
+export interface ArtistImagePayload {
+  enrichmentArtistKey: string;
+  artistName: string;
+}
+
 export interface ResolvePlaybackArtistForEnrichmentPayload {
   trackRef: TrackRef;
   primaryArtistDisplayName?: string;
@@ -50,6 +55,15 @@ export interface DeepcutApi {
   refreshArtistEnrichment: (
     p: ArtistEnrichmentPayload
   ) => Promise<{ ok: boolean; cached: unknown }>;
+  getArtistImage: (
+    p: ArtistImagePayload
+  ) => Promise<
+    | { kind: 'miss' }
+    | { kind: 'hit'; cached: { imageUrl: string; sourcePageUrl?: string | null } }
+  >;
+  refreshArtistImage: (
+    p: ArtistImagePayload
+  ) => Promise<{ ok: boolean; cached: { imageUrl: string; sourcePageUrl?: string | null } | null }>;
   resolvePlaybackArtistForEnrichment: (
     p: ResolvePlaybackArtistForEnrichmentPayload
   ) => Promise<PlaybackArtistResolutionResult>;

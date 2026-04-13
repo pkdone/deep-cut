@@ -17,8 +17,7 @@ export async function pingOpenAi(apiKey: string): Promise<void> {
     body: JSON.stringify({
       model: OPENAI_PING_MODEL,
       messages: [{ role: 'user', content: 'ping' }],
-      max_tokens: 1,
-      temperature: 0,
+      max_completion_tokens: 16,
     }),
   });
   if (!res.ok) {

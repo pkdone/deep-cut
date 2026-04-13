@@ -133,7 +133,6 @@ export const artistEnrichmentSelectionPayloadSchema = z.object({
   bestOfCompilations: z.array(enrichmentCategorizedAlbumEntrySelectionSchema).max(3),
   raritiesCompilations: z.array(enrichmentCategorizedAlbumEntrySelectionSchema).max(3),
   bandMembers: z.array(bandMemberEntrySchema),
-  artistHeroImageCandidateId: synthesisCandidateIdSchema,
 });
 
 export type ArtistEnrichmentSelectionPayload = z.infer<
@@ -142,7 +141,6 @@ export type ArtistEnrichmentSelectionPayload = z.infer<
 
 export const artistReferenceSelectionSchema = z.object({
   artistPrimaryReferenceCandidateId: synthesisCandidateIdSchema,
-  artistHeroImageCandidateId: synthesisCandidateIdSchema,
   albumSelections: z
     .array(
       z.object({

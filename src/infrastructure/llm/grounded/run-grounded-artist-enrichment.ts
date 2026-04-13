@@ -90,11 +90,11 @@ export async function runGroundedArtistEnrichment(params: {
     retrievalQueries: [...evidence.retrievalQueries, ...targeted.retrievalQueries],
     sources: targeted.sources.length > 0 ? targeted.sources : evidence.sources,
     artistReferenceCandidates: targeted.artistReferenceCandidates,
-    artistImageCandidates: targeted.artistImageCandidates,
+    artistImageCandidates: [],
     albumReferenceBuckets: targeted.albumReferenceBuckets,
     trackReferenceBuckets: targeted.trackReferenceBuckets,
     referenceCandidates: targeted.referenceCandidates,
-    imageCandidates: targeted.imageCandidates,
+    imageCandidates: [],
     retrievalDigest: [evidence.retrievalDigest, targeted.retrievalDigest]
       .filter((part) => part.length > 0)
       .join('\n\n')

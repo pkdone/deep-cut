@@ -26,6 +26,8 @@ export const IPC_CHANNELS = {
   savePlaybackSession: 'deepcut:savePlaybackSession',
   getArtistEnrichment: 'deepcut:getArtistEnrichment',
   refreshArtistEnrichment: 'deepcut:refreshArtistEnrichment',
+  getArtistImage: 'deepcut:getArtistImage',
+  refreshArtistImage: 'deepcut:refreshArtistImage',
   resolvePlaybackArtistForEnrichment: 'deepcut:resolvePlaybackArtistForEnrichment',
   /** Run a minimal LLM request; updates cached result in main. */
   llmPing: 'deepcut:llmPing',

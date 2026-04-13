@@ -85,24 +85,6 @@ function collectImageCandidatesFromDigest(
     }));
 }
 
-function collectImageCandidatesFromSourceUrls(
-  urls: readonly { url: string; title?: string }[],
-  digest: string,
-): { imageUrl: string; title?: string; periodHint?: string }[] {
-  const periodHint = digest.toLowerCase().includes('classic') ? 'classic' : undefined;
-  return urls
-    .filter((row) =>
-      /\.(?:png|jpe?g|webp|gif)(?:$|\?)/iu.test(row.url) ||
-      /\/wiki\/file(?::|%3a)/iu.test(row.url) ||
-      /\/wikipedia\/commons\/thumb\//iu.test(row.url)
-    )
-    .map((row, i) => ({
-      imageUrl: row.url,
-      title: row.title ?? `Anthropic source image ${String(i + 1)}`,
-      periodHint,
-    }));
-}
-
 async function runAnthropicWebSearch(params: {
   apiKey: string;
   prompt: string;
@@ -160,26 +142,18 @@ function buildBucketPrompt(params: {
   ].join('\n');
 }
 
-function buildArtistRefAndHeroImagePrompt(params: {
+function buildArtistReferencePrompt(params: {
   artistDisplayName: string;
   artistQueries: readonly string[];
-  imageQueries: readonly string[];
 }): string {
   return [
-    'Use web search to find current information for BOTH parts below.',
+    'Use web search to find current artist reference information.',
     `Artist: ${params.artistDisplayName}`,
     '',
-    'Part A — primary artist reference:',
     'Find the best artist or band biography / overview pages.',
     'Reject album, EP, discography, and song pages.',
     'Reply in plain prose and include useful page URLs inline when relevant.',
     `Search ideas: ${params.artistQueries.join(' | ')}`,
-    '',
-    'Part B — artist hero image:',
-    'Find image or media pages that could provide a classic-period artist photo.',
-    'Prefer Wikimedia Commons file pages or direct upload.wikimedia.org image assets.',
-    'When possible, include direct https image URLs inline in the prose.',
-    `Search ideas: ${params.imageQueries.join(' | ')}`,
   ].join('\n');
 }
 
@@ -191,11 +165,9 @@ export async function retrieveTargetedEnrichmentBucketsAnthropic(params: {
 }): Promise<{
   retrievalQueries: string[];
   artistReferenceCandidates: Awaited<ReturnType<typeof createReferenceCandidate>>[];
-  artistImageCandidates: Awaited<ReturnType<typeof createImageCandidate>>[];
   albumReferenceBuckets: { targetName: string; candidates: Awaited<ReturnType<typeof createReferenceCandidate>>[] }[];
   trackReferenceBuckets: { targetName: string; candidates: Awaited<ReturnType<typeof createReferenceCandidate>>[] }[];
   referenceCandidates: Awaited<ReturnType<typeof createReferenceCandidate>>[];
-  imageCandidates: Awaited<ReturnType<typeof createImageCandidate>>[];
   sources: ReturnType<typeof createSourceFromReferenceCandidate>[];
   retrievalDigest: string;
   warnings: string[];
@@ -208,54 +180,24 @@ export async function retrieveTargetedEnrichmentBucketsAnthropic(params: {
     `${params.artistDisplayName} official site`,
     `${params.artistDisplayName} britannica`,
   ];
-  const imageQueries = [
-    `${params.artistDisplayName} classic era photo`,
-    `${params.artistDisplayName} iconic photo`,
-    `${params.artistDisplayName} early live photo`,
-    `${params.artistDisplayName} site:wikimedia.org`,
-  ];
-  const combinedArtistAndImageSearch = await runAnthropicWebSearch({
+  const artistSearch = await runAnthropicWebSearch({
     apiKey: params.apiKey,
-    prompt: buildArtistRefAndHeroImagePrompt({
+    prompt: buildArtistReferencePrompt({
       artistDisplayName: params.artistDisplayName,
       artistQueries,
-      imageQueries,
     }),
   });
-  retrievalQueries.push(...artistQueries, ...imageQueries);
-  const artistReferenceCandidates = combinedArtistAndImageSearch.urls.map((u, i) =>
+  retrievalQueries.push(...artistQueries);
+  const artistReferenceCandidates = artistSearch.urls.map((u, i) =>
     createReferenceCandidate({
       candidateId: `anthropic-artist-ref-${String(i)}`,
       url: u.url,
       title: u.title,
-      snippet: combinedArtistAndImageSearch.digest.slice(0, MAX_SNIPPET_CHARS),
+      snippet: artistSearch.digest.slice(0, MAX_SNIPPET_CHARS),
       sourceProvider: 'anthropic',
       appliesToName: params.artistDisplayName,
     }),
   );
-
-  const digestImageCandidates = collectImageCandidatesFromDigest(combinedArtistAndImageSearch.digest);
-  const sourceImageCandidates = collectImageCandidatesFromSourceUrls(
-    combinedArtistAndImageSearch.urls,
-    combinedArtistAndImageSearch.digest,
-  );
-  const rawImageCandidates = [...sourceImageCandidates, ...digestImageCandidates]
-    .slice(0, MAX_SOURCES * 2);
-  const artistImageCandidates = rawImageCandidates.map((u, i) =>
-    {
-      try {
-        return createImageCandidate({
-          candidateId: `anthropic-artist-img-${String(i)}`,
-          imageUrl: u.imageUrl,
-          title: u.title,
-          periodHint: u.periodHint,
-          sourceProvider: 'anthropic',
-        });
-      } catch {
-        return null;
-      }
-    },
-  ).filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== null);
 
   type PooledTask =
     | { kind: 'album'; targetName: string }
@@ -362,12 +304,11 @@ export async function retrieveTargetedEnrichmentBucketsAnthropic(params: {
     ...albumReferenceBuckets.flatMap((bucket) => bucket.candidates),
     ...trackReferenceBuckets.flatMap((bucket) => bucket.candidates),
   ];
-  const imageCandidates = [...artistImageCandidates];
   const sources = referenceCandidates.map((candidate) =>
     createSourceFromReferenceCandidate(candidate, new Date()),
   );
   const retrievalDigest = [
-    combinedArtistAndImageSearch.digest,
+    artistSearch.digest,
     ...albumReferenceBuckets.map((bucket) =>
       `${bucket.targetName}: ${bucket.candidates.map((candidate) => candidate.url).join(' ')}`,
     ),
@@ -382,18 +323,13 @@ export async function retrieveTargetedEnrichmentBucketsAnthropic(params: {
   if (artistReferenceCandidates.length === 0) {
     warnings.push('Targeted artist reference retrieval returned no structured candidates.');
   }
-  if (artistImageCandidates.length === 0) {
-    warnings.push('Targeted artist image retrieval returned no structured image candidates.');
-  }
 
   return {
     retrievalQueries,
     artistReferenceCandidates,
-    artistImageCandidates,
     albumReferenceBuckets,
     trackReferenceBuckets,
     referenceCandidates,
-    imageCandidates,
     sources,
     retrievalDigest,
     warnings,
