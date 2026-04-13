@@ -6,6 +6,13 @@ import { retrieveArtistEvidenceOpenAi } from './openai-retrieval.js';
 import { synthesizeArtistInsightsFromEvidence } from './synthesize-artist-insights.js';
 import { ANTHROPIC_MESSAGES_MODEL } from '../anthropic-messages-model.js';
 import { OPENAI_RETRIEVAL_MODEL } from './openai-retrieval.js';
+import { sanitizeEnrichmentUrlsWithEvidence } from './sanitize-enrichment-urls-with-evidence.js';
+import { retrieveTargetedEnrichmentBuckets } from './retrieve-targeted-enrichment-buckets.js';
+import { selectEnrichmentReferencesFromBuckets } from './select-enrichment-references.js';
+import {
+  applyReferenceSelectionToPayload,
+  resolveArtistPrimaryReference,
+} from './resolve-enrichment-candidates.js';
 
 /**
  * Full grounded pipeline: web retrieval → synthesis → persisted aggregate (caller upserts).
@@ -42,7 +49,7 @@ export async function runGroundedArtistEnrichment(params: {
     evidenceStatus: evidence.status,
   });
 
-  const { result, synthesisModel } = await synthesizeArtistInsightsFromEvidence({
+  const stage1 = await synthesizeArtistInsightsFromEvidence({
     provider: params.provider,
     apiKey: params.apiKey,
     artistDisplayName: params.artistDisplayName,
@@ -50,35 +57,98 @@ export async function runGroundedArtistEnrichment(params: {
     retryOnce: true,
   });
 
+  const stage1Payload =
+    stage1.result.kind === 'full' ? stage1.result.payload : stage1.result.payload;
+
+  const targeted = await retrieveTargetedEnrichmentBuckets({
+    provider: params.provider,
+    apiKey: params.apiKey,
+    artistDisplayName: params.artistDisplayName,
+    albumNames: [
+      ...stage1Payload.rankedAlbums.map((row) => row.name),
+      ...stage1Payload.liveAlbums.map((row) => row.name),
+      ...stage1Payload.bestOfCompilations.map((row) => row.name),
+      ...stage1Payload.raritiesCompilations.map((row) => row.name),
+    ],
+    trackNames: stage1Payload.topTracks.map((row) => row.title),
+  });
+
+  const mergedEvidence = {
+    ...evidence,
+    retrievalQueries: [...evidence.retrievalQueries, ...targeted.retrievalQueries],
+    sources: targeted.sources.length > 0 ? targeted.sources : evidence.sources,
+    artistReferenceCandidates: targeted.artistReferenceCandidates,
+    artistImageCandidates: targeted.artistImageCandidates,
+    albumReferenceBuckets: targeted.albumReferenceBuckets,
+    trackReferenceBuckets: targeted.trackReferenceBuckets,
+    referenceCandidates: targeted.referenceCandidates,
+    imageCandidates: targeted.imageCandidates,
+    retrievalDigest: [evidence.retrievalDigest, targeted.retrievalDigest]
+      .filter((part) => part.length > 0)
+      .join('\n\n')
+      .slice(0, 120_000),
+    warnings: [...evidence.warnings, ...targeted.warnings],
+  };
+
+
+  const { selection: referenceSelection } = await selectEnrichmentReferencesFromBuckets({
+    provider: params.provider,
+    apiKey: params.apiKey,
+    artistDisplayName: params.artistDisplayName,
+    evidence: mergedEvidence,
+  });
+
+
   const now = new Date();
+  const primaryReference = resolveArtistPrimaryReference(referenceSelection, mergedEvidence);
   const base = {
     enrichmentArtistKey: params.enrichmentArtistKey,
     artistName: params.artistDisplayName,
     cachedAt: now,
     provider: params.provider,
-    docSchemaVersion: 5,
-    evidence,
+    docSchemaVersion: 8,
+    evidence: mergedEvidence,
     retrievalModel,
-    synthesisModel,
-    lastRetrievalAt: evidence.requestedAt,
+    synthesisModel: stage1.synthesisModel,
+    lastRetrievalAt: mergedEvidence.requestedAt,
     lastSynthesisAt: now,
+    primaryReference,
   };
 
-  if (result.kind === 'full') {
+  if (stage1.result.kind === 'full') {
+    const resolvedPayload = applyReferenceSelectionToPayload(
+      stage1.result.payload,
+      referenceSelection,
+      mergedEvidence,
+    );
+    const payload = sanitizeEnrichmentUrlsWithEvidence(
+      resolvedPayload,
+      mergedEvidence,
+    );
+
     return {
       ...base,
-      payload: result.payload,
+      payload,
       partialPayload: undefined,
       validationStatus: 'valid',
-      warnings: [...evidence.warnings],
+      warnings: [...mergedEvidence.warnings],
     };
   }
 
+  const resolvedPartialPayload = applyReferenceSelectionToPayload(
+    stage1.result.payload,
+    referenceSelection,
+    mergedEvidence,
+  );
+  const partialPayload = sanitizeEnrichmentUrlsWithEvidence(
+    resolvedPartialPayload,
+    mergedEvidence,
+  );
   return {
     ...base,
     payload: undefined,
-    partialPayload: result.payload,
+    partialPayload,
     validationStatus: 'partial',
-    warnings: [...evidence.warnings, ...result.warnings],
+    warnings: [...mergedEvidence.warnings, ...stage1.result.warnings],
   };
 }

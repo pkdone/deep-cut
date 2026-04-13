@@ -38,7 +38,21 @@ export const IPC_CHANNELS = {
   onLibraryUpdated: 'deepcut:onLibraryUpdated',
   /** Main → renderer: payload `{ scanning: boolean }`. */
   libraryScanState: 'deepcut:libraryScanState',
+  /** Open https URL in the system default browser (main process). */
+  openExternalUrl: 'deepcut:openExternalUrl',
 } as const;
+
+/** Renderer → main: open a single https URL externally. */
+export const openExternalUrlPayload = z
+  .string()
+  .url()
+  .refine((u) => {
+    try {
+      return new URL(u).protocol === 'https:';
+    } catch {
+      return false;
+    }
+  }, 'Only https URLs are allowed');
 
 export const saveSettingsPayload = appSettingsSchema;
 export const savePlaybackPayload = playbackSessionSchema;

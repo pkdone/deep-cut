@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactElement } from 'react';
+import { useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import type { ArtistEnrichmentCache } from '../../../domain/schemas/artist-enrichment.js';
 import type { BandMemberTenurePeriod } from '../../../domain/schemas/artist-enrichment.js';
 import type { TrackRef } from '../../../domain/schemas/track-ref.js';
@@ -63,6 +63,28 @@ function formatBandMemberTenure(periods: readonly BandMemberTenurePeriod[]): str
     .join(', ');
 }
 
+function InsightReferenceLink(props: {
+  url: string | null | undefined;
+  children: ReactNode;
+}): ReactElement {
+  const { url, children } = props;
+  if (url != null && url.length > 0) {
+    return (
+      <button
+        type="button"
+        className="np-insights-artist-link np-insights-row-link"
+        title="Open reference page in your browser"
+        onClick={() => {
+          void window.deepcut.openExternalUrl(url);
+        }}
+      >
+        {children}
+      </button>
+    );
+  }
+  return <>{children}</>;
+}
+
 export function NowPlayingPage(): ReactElement {
   const pb = usePlayback();
   const cur = pb.current;
@@ -75,6 +97,7 @@ export function NowPlayingPage(): ReactElement {
   const [loadingInsight, setLoadingInsight] = useState(false);
   const [displayName, setDisplayName] = useState<string | null>(null);
   const [refreshBusy, setRefreshBusy] = useState(false);
+  const [heroImageFailed, setHeroImageFailed] = useState(false);
 
   useEffect(() => {
     if (cur === null) {
@@ -85,6 +108,7 @@ export function NowPlayingPage(): ReactElement {
       setOfflineMsg(false);
       setLoadingInsight(false);
       setDisplayName(null);
+      setHeroImageFailed(false);
       return undefined;
     }
 
@@ -181,6 +205,52 @@ export function NowPlayingPage(): ReactElement {
 
   const insightBody = enrich !== null ? artistInsightsBodyForUi(enrich) : null;
   const insightWarnings = enrich !== null ? artistInsightsWarningsForUi(enrich) : [];
+  const primaryRefUrl =
+    enrich != null &&
+    enrich.primaryReference != null &&
+    enrich.primaryReference.url.length > 0
+      ? enrich.primaryReference.url
+      : null;
+
+  const heroImageUrl =
+    insightBody != null &&
+    insightBody.artistHeroImage != null &&
+    insightBody.artistHeroImage.imageUrl.length > 0
+      ? insightBody.artistHeroImage.imageUrl
+      : null;
+  const showHeroPlaceholder = heroImageUrl === null || heroImageFailed;
+  const heroVisual = heroImageUrl !== null && !heroImageFailed ? (
+    <img
+      className="np-insights-hero np-insights-synopsis-hero"
+      src={heroImageUrl}
+      alt={`${artistLabel} — photo`}
+      referrerPolicy="no-referrer"
+      onError={() => {
+        setHeroImageFailed(true);
+      }}
+    />
+  ) : (
+    <div
+      className="np-insights-hero np-insights-synopsis-hero np-insights-hero-placeholder"
+      aria-label={`${artistLabel} image placeholder`}
+      title="Artist image unavailable"
+    >
+      <svg viewBox="0 0 24 24" aria-hidden={true} focusable={false}>
+        <circle cx="12" cy="8" r="4" />
+        <path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8" />
+      </svg>
+    </div>
+  );
+
+  useEffect(() => {
+    setHeroImageFailed(false);
+  }, [enrich]);
+
+  useEffect(() => {
+    if (enrich == null || insightBody == null) {
+      return;
+    }
+  }, [enrich, heroImageFailed, heroImageUrl, insightBody, primaryRefUrl, showHeroPlaceholder]);
 
   return (
     <div>
@@ -190,41 +260,59 @@ export function NowPlayingPage(): ReactElement {
       {cur !== null ? (
         <div className="panel">
           <div className="np-insights-heading-row">
-            <h2>{artistLabel}</h2>
-            <button
-              type="button"
-              className="icon-button"
-              title={refreshBusy ? 'Refreshing insights…' : 'Regenerate insights and refresh cache'}
-              aria-label={refreshBusy ? 'Refreshing insights' : 'Regenerate insights and refresh cache'}
-              aria-busy={refreshBusy}
-              disabled={refreshBusy || loadingInsight}
-              onClick={() => {
-                void (async () => {
-                  setEnrichErr(null);
-                  setRefreshBusy(true);
-                  try {
-                    const resolved = await window.deepcut.resolvePlaybackArtistForEnrichment(
-                      resolvePlaybackPayload(cur, pb.primaryArtistDisplayName)
-                    );
-                    if (resolved.kind === 'error') {
-                      setEnrichErr(resolved.message ?? resolved.reason);
-                      return;
+            <div className="np-insights-heading-main">
+              <h2 className="np-insights-heading-row-title">
+                {primaryRefUrl !== null ? (
+                  <button
+                    type="button"
+                    className="np-insights-artist-link"
+                    title="Open primary reference page in your browser"
+                    aria-label={`Open reference page for ${artistLabel} in your browser`}
+                    onClick={() => {
+                      void window.deepcut.openExternalUrl(primaryRefUrl);
+                    }}
+                  >
+                    {artistLabel}
+                  </button>
+                ) : (
+                  artistLabel
+                )}
+              </h2>
+              <button
+                type="button"
+                className="icon-button"
+                title={refreshBusy ? 'Refreshing insights…' : 'Regenerate insights and refresh cache'}
+                aria-label={refreshBusy ? 'Refreshing insights' : 'Regenerate insights and refresh cache'}
+                aria-busy={refreshBusy}
+                disabled={refreshBusy || loadingInsight}
+                onClick={() => {
+                  void (async () => {
+                    setEnrichErr(null);
+                    setRefreshBusy(true);
+                    try {
+                      const resolved = await window.deepcut.resolvePlaybackArtistForEnrichment(
+                        resolvePlaybackPayload(cur, pb.primaryArtistDisplayName)
+                      );
+                      if (resolved.kind === 'error') {
+                        setEnrichErr(resolved.message ?? resolved.reason);
+                        return;
+                      }
+                      const r = await window.deepcut.refreshArtistEnrichment({
+                        enrichmentArtistKey: resolved.enrichmentArtistKey,
+                        artistName: resolved.displayName,
+                      });
+                      setEnrich(r.cached as ArtistEnrichmentCache | null);
+                    } catch (e) {
+                      setEnrichErr(String(e));
+                    } finally {
+                      setRefreshBusy(false);
                     }
-                    const r = await window.deepcut.refreshArtistEnrichment({
-                      enrichmentArtistKey: resolved.enrichmentArtistKey,
-                      artistName: resolved.displayName,
-                    });
-                    setEnrich(r.cached as ArtistEnrichmentCache | null);
-                  } catch (e) {
-                    setEnrichErr(String(e));
-                  } finally {
-                    setRefreshBusy(false);
-                  }
-                })();
-              }}
-            >
-              {refreshBusy ? <RefreshInsightsSpinner /> : <RefreshInsightsIcon />}
-            </button>
+                  })();
+                }}
+              >
+                {refreshBusy ? <RefreshInsightsSpinner /> : <RefreshInsightsIcon />}
+              </button>
+            </div>
           </div>
           {loadingInsight ? <p className="subtitle">Loading…</p> : null}
           {resolutionError !== null ? <p className="error-text">{resolutionError}</p> : null}
@@ -249,104 +337,127 @@ export function NowPlayingPage(): ReactElement {
                   {insightWarnings.join(' ')}
                 </p>
               ) : null}
-              <p className="np-insights-synopsis">{insightBody.synopsis}</p>
-              {insightBody.topTracks.length > 0 ? (
-                <>
-                  <h3>Ranked Top Tracks</h3>
-                  <ol className="np-ranked-list">
-                    {[...insightBody.topTracks]
-                      .sort((a, b) => a.rank - b.rank)
-                      .map((t) => (
-                        <li key={`track-${String(t.rank)}-${t.title}`} value={t.rank}>
-                          {t.title}
-                          {t.releaseYear !== undefined ? ` (${t.releaseYear})` : ''}
+              <div className="np-insights-body-flow">
+                {heroVisual}
+                <p className="np-insights-synopsis">{insightBody.synopsis}</p>
+                {insightBody.topTracks.length > 0 ? (
+                  <>
+                    <h3>Ranked Top Tracks</h3>
+                    <ol className="np-ranked-list">
+                      {[...insightBody.topTracks]
+                        .sort((a, b) => a.rank - b.rank)
+                        .map((t) => (
+                          <li key={`track-${String(t.rank)}-${t.title}`} value={t.rank}>
+                            <InsightReferenceLink url={t.primaryReference?.url}>
+                              <>
+                                {t.title}
+                                {t.releaseYear !== undefined ? ` (${t.releaseYear})` : ''}
+                              </>
+                            </InsightReferenceLink>
+                          </li>
+                        ))}
+                    </ol>
+                  </>
+                ) : null}
+                {insightBody.rankedAlbums.length > 0 ? (
+                  <>
+                    <h3>Ranked Studio Albums</h3>
+                    <ol className="np-ranked-list">
+                      {[...insightBody.rankedAlbums]
+                        .sort((a, b) => a.rank - b.rank)
+                        .map((al) => (
+                          <li key={`ranked-${String(al.rank)}-${al.name}`} value={al.rank}>
+                            <InsightReferenceLink url={al.primaryReference?.url}>
+                              <>
+                                {al.name} ({al.releaseYear})
+                              </>
+                            </InsightReferenceLink>
+                          </li>
+                        ))}
+                    </ol>
+                  </>
+                ) : null}
+                {insightBody.liveAlbums.length === 0 &&
+                insightBody.bestOfCompilations.length === 0 &&
+                insightBody.raritiesCompilations.length === 0 ? (
+                  <p className="subtitle np-insights-empty-categories">
+                    No live, best-of, or rarities releases were listed in this summary. Refresh to try again with updated source retrieval.
+                  </p>
+                ) : null}
+                {insightBody.liveAlbums.length > 0 ? (
+                  <>
+                    <h3>Ranked Live Albums</h3>
+                    <ol className="np-ranked-list">
+                      {[...insightBody.liveAlbums]
+                        .sort((a, b) => a.rank - b.rank)
+                        .map((al) => (
+                          <li key={`live-${String(al.rank)}-${al.name}`} value={al.rank}>
+                            <InsightReferenceLink url={al.primaryReference?.url}>
+                              <>
+                                {al.name} ({al.releaseYear})
+                              </>
+                            </InsightReferenceLink>
+                          </li>
+                        ))}
+                    </ol>
+                  </>
+                ) : null}
+                {insightBody.bestOfCompilations.length > 0 ? (
+                  <>
+                    <h3>Ranked Best-Of Compilations</h3>
+                    <ol className="np-ranked-list">
+                      {[...insightBody.bestOfCompilations]
+                        .sort((a, b) => a.rank - b.rank)
+                        .map((al) => (
+                          <li key={`best-${String(al.rank)}-${al.name}`} value={al.rank}>
+                            <InsightReferenceLink url={al.primaryReference?.url}>
+                              <>
+                                {al.name} ({al.releaseYear})
+                              </>
+                            </InsightReferenceLink>
+                          </li>
+                        ))}
+                    </ol>
+                  </>
+                ) : null}
+                {insightBody.raritiesCompilations.length > 0 ? (
+                  <>
+                    <h3>Ranked Rarities Compilations</h3>
+                    <ol className="np-ranked-list">
+                      {[...insightBody.raritiesCompilations]
+                        .sort((a, b) => a.rank - b.rank)
+                        .map((al) => (
+                          <li key={`rarities-${String(al.rank)}-${al.name}`} value={al.rank}>
+                            <InsightReferenceLink url={al.primaryReference?.url}>
+                              <>
+                                {al.name} ({al.releaseYear})
+                              </>
+                            </InsightReferenceLink>
+                          </li>
+                        ))}
+                    </ol>
+                  </>
+                ) : null}
+                {insightBody.bandMembers.length > 0 ? (
+                  <>
+                    <h3>Band Members</h3>
+                    <ul className="np-band-members-list">
+                      {insightBody.bandMembers.map((m, idx) => (
+                        <li key={`member-${String(idx)}-${m.name}`}>
+                          <strong>{m.name}</strong>
+                          <span className="np-band-tenure"> ({formatBandMemberTenure(m.periods)})</span>
+                          {m.instruments.length > 0 ? (
+                            <span className="np-band-instruments">
+                              {' '}
+                              — {m.instruments.join(', ')}
+                            </span>
+                          ) : null}
                         </li>
                       ))}
-                  </ol>
-                </>
-              ) : null}
-              {insightBody.rankedAlbums.length > 0 ? (
-                <>
-                  <h3>Ranked Studio Albums</h3>
-                  <ol className="np-ranked-list">
-                    {[...insightBody.rankedAlbums]
-                      .sort((a, b) => a.rank - b.rank)
-                      .map((al) => (
-                        <li key={`ranked-${String(al.rank)}-${al.name}`} value={al.rank}>
-                          {al.name} ({al.releaseYear})
-                        </li>
-                      ))}
-                  </ol>
-                </>
-              ) : null}
-              {insightBody.liveAlbums.length === 0 &&
-              insightBody.bestOfCompilations.length === 0 &&
-              insightBody.raritiesCompilations.length === 0 ? (
-                <p className="subtitle np-insights-empty-categories">
-                  No live, best-of, or rarities releases were listed in this summary. Use refresh to regenerate with the latest prompt.
-                </p>
-              ) : null}
-              {insightBody.liveAlbums.length > 0 ? (
-                <>
-                  <h3>Ranked Live Albums</h3>
-                  <ol className="np-ranked-list">
-                    {[...insightBody.liveAlbums]
-                      .sort((a, b) => a.rank - b.rank)
-                      .map((al) => (
-                        <li key={`live-${String(al.rank)}-${al.name}`} value={al.rank}>
-                          {al.name} ({al.releaseYear})
-                        </li>
-                      ))}
-                  </ol>
-                </>
-              ) : null}
-              {insightBody.bestOfCompilations.length > 0 ? (
-                <>
-                  <h3>Ranked Best-Of Compilations</h3>
-                  <ol className="np-ranked-list">
-                    {[...insightBody.bestOfCompilations]
-                      .sort((a, b) => a.rank - b.rank)
-                      .map((al) => (
-                        <li key={`best-${String(al.rank)}-${al.name}`} value={al.rank}>
-                          {al.name} ({al.releaseYear})
-                        </li>
-                      ))}
-                  </ol>
-                </>
-              ) : null}
-              {insightBody.raritiesCompilations.length > 0 ? (
-                <>
-                  <h3>Ranked Rarities Compilations</h3>
-                  <ol className="np-ranked-list">
-                    {[...insightBody.raritiesCompilations]
-                      .sort((a, b) => a.rank - b.rank)
-                      .map((al) => (
-                        <li key={`rarities-${String(al.rank)}-${al.name}`} value={al.rank}>
-                          {al.name} ({al.releaseYear})
-                        </li>
-                      ))}
-                  </ol>
-                </>
-              ) : null}
-              {insightBody.bandMembers.length > 0 ? (
-                <>
-                  <h3>Band Members</h3>
-                  <ul className="np-band-members-list">
-                    {insightBody.bandMembers.map((m, idx) => (
-                      <li key={`member-${String(idx)}-${m.name}`}>
-                        <strong>{m.name}</strong>
-                        <span className="np-band-tenure"> ({formatBandMemberTenure(m.periods)})</span>
-                        {m.instruments.length > 0 ? (
-                          <span className="np-band-instruments">
-                            {' '}
-                            — {m.instruments.join(', ')}
-                          </span>
-                        ) : null}
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              ) : null}
+                    </ul>
+                  </>
+                ) : null}
+              </div>
             </>
           ) : null}
         </div>

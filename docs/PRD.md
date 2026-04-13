@@ -659,7 +659,7 @@ If there is **no cached enrichment** and the user is **offline** (or the LLM end
 
 - Artist enrichment is generated on demand when the user requests refresh from the **Now Playing** screen (or equivalent visible flow for the current track’s primary artist).
 - The **Now Playing** screen displays, for that artist:
-  - a primary heading that is the **artist name** only (no required suffix such as “Insights”)
+  - a primary heading that is the **artist name** only (no required suffix such as “Insights”); when a **primary reference URL** (e.g. from retrieval, preferring Wikipedia) is available, that heading may be a **link** that opens the page in the user’s default browser (this is not a full provenance UI)
   - artist synopsis (multi-sentence opening paragraph per §13.2)
   - ranked albums and top 10 tracks (with years when provided)
   - live / best-of / rarities sections as applicable (each ranked within the section), with release years

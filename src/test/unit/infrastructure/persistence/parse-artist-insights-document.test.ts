@@ -7,6 +7,7 @@ const tenTopTracks = Array.from({ length: 10 }, (_, i) => ({
   title: `Song ${String(i + 1)}`,
   rank: i + 1,
   releaseYear: 1990 + i,
+  primaryReference: undefined,
 }));
 
 describe('parseArtistInsightsDocument', () => {
@@ -16,12 +17,13 @@ describe('parseArtistInsightsDocument', () => {
       artistName: 'Artist',
       payload: {
         synopsis: synopsis320,
-        rankedAlbums: [{ name: 'LP', releaseYear: 1990, rank: 1 }],
+        rankedAlbums: [{ name: 'LP', releaseYear: 1990, rank: 1, primaryReference: undefined }],
         topTracks: tenTopTracks,
         liveAlbums: [],
         bestOfCompilations: [],
         raritiesCompilations: [],
         bandMembers: [],
+        artistHeroImage: undefined,
       },
       cachedAt: new Date().toISOString(),
       provider: 'openai',

@@ -41,6 +41,8 @@ contextBridge.exposeInMainWorld('deepcut', {
     ipcRenderer.invoke(IPC_CHANNELS.spotifyArtistCatalog, artistId),
   spotifyGetArtist: async (id: string) => ipcRenderer.invoke(IPC_CHANNELS.spotifyGetArtist, id),
   spotifyGetAlbum: async (id: string) => ipcRenderer.invoke(IPC_CHANNELS.spotifyGetAlbum, id),
+  openExternalUrl: async (url: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.openExternalUrl, url) as Promise<{ ok: boolean }>,
   onLibraryUpdated: (cb: () => void) => {
     const listener = (): void => {
       cb();

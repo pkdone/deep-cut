@@ -1,4 +1,4 @@
-import { type BrowserWindow, dialog, ipcMain } from 'electron';
+import { type BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import chokidar from 'chokidar';
 import { v4 as uuidv4 } from 'uuid';
 import { fetchArtistEnrichment } from '../../infrastructure/llm/fetch-artist-enrichment.js';
@@ -31,6 +31,7 @@ import {
   IPC_CHANNELS,
   addTrackToPlaylistPayload,
   artistEnrichmentPayload,
+  openExternalUrlPayload,
   resolvePlaybackArtistForEnrichmentPayload,
   savePlaybackPayload,
   savePlaylistPayload,
@@ -591,6 +592,15 @@ export function registerIpcHandlers(params: {
 
     const cached = await enrichRepo.get(parsed.data.enrichmentArtistKey);
     return { ok: true as const, cached };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.openExternalUrl, async (_e, raw: unknown) => {
+    const parsed = openExternalUrlPayload.safeParse(raw);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid URL');
+    }
+    await shell.openExternal(parsed.data);
+    return { ok: true as const };
   });
 
   ipcMain.handle(IPC_CHANNELS.resolvePlaybackArtistForEnrichment, async (_e, raw: unknown) => {

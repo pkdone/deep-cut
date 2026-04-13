@@ -67,6 +67,8 @@ export interface DeepcutApi {
     artists: { name: string }[];
     tracks: { items: { id: string; name: string; uri: string; duration_ms: number }[] };
   } | null>;
+  /** Open an https URL in the system default browser (main process). */
+  openExternalUrl: (url: string) => Promise<{ ok: boolean }>;
   onLibraryUpdated: (cb: () => void) => () => void;
   onLibraryScanState: (cb: (payload: { scanning: boolean }) => void) => () => void;
 }
