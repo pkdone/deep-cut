@@ -13,6 +13,9 @@ export function HomePage(): React.ReactElement {
     <div>
       <div className="panel">
         <h2>Playlists</h2>
+        <p className="subtitle">
+          Manage folder hierarchy, rename/delete, and ordering in the Playlists tab.
+        </p>
         {playlists.length === 0 ? <p className="subtitle">No playlists yet — create one from Search or Playlists.</p> : null}
         <ul style={{ listStyle: 'none', padding: 0 }}>
           {playlists.map((p) => (

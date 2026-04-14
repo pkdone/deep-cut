@@ -8,6 +8,22 @@ import {
 } from '../../../domain/services/artist-insights-for-ui.js';
 import { usePlayback } from '../playback/PlaybackProvider.js';
 
+interface ArtistTabState {
+  readonly tabId: string;
+  readonly artistKey: string;
+  readonly displayName: string;
+  readonly trackRef: TrackRef;
+  readonly enrich: ArtistEnrichmentCache | null;
+  readonly enrichErr: string | null;
+  readonly resolutionError: string | null;
+  readonly artistImageUrl: string | null;
+  readonly offlineMsg: boolean;
+  readonly loadingInsight: boolean;
+  readonly updatedAtMs: number;
+}
+
+const NOW_PLAYING_TAB_LIMIT = 3;
+
 function resolvePlaybackPayload(
   trackRef: TrackRef,
   primaryArtistDisplayName: string | null
@@ -99,17 +115,20 @@ export function NowPlayingPage(): ReactElement {
   const [artistImageUrl, setArtistImageUrl] = useState<string | null>(null);
   const [refreshBusy, setRefreshBusy] = useState(false);
   const [heroImageFailed, setHeroImageFailed] = useState(false);
+  const [autoRefreshOnMiss, setAutoRefreshOnMiss] = useState(false);
+  const [artistTabs, setArtistTabs] = useState<ArtistTabState[]>([]);
+  const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  const [userPinnedTab, setUserPinnedTab] = useState(false);
+
+  useEffect(() => {
+    void window.deepcut.getSettings().then((settings) => {
+      setAutoRefreshOnMiss(settings.nowPlayingAutoRefreshOnMiss ?? false);
+    });
+  }, []);
 
   useEffect(() => {
     if (cur === null) {
       prevTrackIdentityRef.current = null;
-      setResolutionError(null);
-      setEnrich(null);
-      setEnrichErr(null);
-      setOfflineMsg(false);
-      setLoadingInsight(false);
-      setDisplayName(null);
-      setArtistImageUrl(null);
       setHeroImageFailed(false);
       return undefined;
     }
@@ -120,7 +139,6 @@ export function NowPlayingPage(): ReactElement {
       prevTrackIdentityRef.current = identity;
       setLoadingInsight(true);
       setResolutionError(null);
-      setEnrich(null);
       setEnrichErr(null);
       setOfflineMsg(false);
       setDisplayName(null);
@@ -142,6 +160,38 @@ export function NowPlayingPage(): ReactElement {
       }
       setResolutionError(null);
       setDisplayName(resolved.displayName);
+      const tabId = resolved.enrichmentArtistKey;
+      setArtistTabs((prev) => {
+        const existing = prev.find((tab) => tab.tabId === tabId);
+        const nextBase = existing === undefined
+          ? [{
+              tabId,
+              artistKey: resolved.enrichmentArtistKey,
+              displayName: resolved.displayName,
+              trackRef: cur,
+              enrich: null,
+              enrichErr: null,
+              resolutionError: null,
+              artistImageUrl: null,
+              offlineMsg: false,
+              loadingInsight: true,
+              updatedAtMs: Date.now(),
+            }, ...prev]
+          : [{
+              ...existing,
+              displayName: resolved.displayName,
+              trackRef: cur,
+              loadingInsight: true,
+              updatedAtMs: Date.now(),
+            }, ...prev.filter((tab) => tab.tabId !== tabId)];
+        return nextBase.slice(0, NOW_PLAYING_TAB_LIMIT);
+      });
+      if (!userPinnedTab) {
+        setActiveTabId(tabId);
+      }
+      if (activeTabId === null) {
+        setActiveTabId(tabId);
+      }
       const imageResult = await window.deepcut.getArtistImage({
         enrichmentArtistKey: resolved.enrichmentArtistKey,
         artistName: resolved.displayName,
@@ -151,8 +201,18 @@ export function NowPlayingPage(): ReactElement {
       }
       if (imageResult.kind === 'hit') {
         setArtistImageUrl(imageResult.cached.imageUrl);
+        setArtistTabs((prev) =>
+          prev.map((tab) =>
+            tab.tabId === tabId ? { ...tab, artistImageUrl: imageResult.cached.imageUrl } : tab
+          )
+        );
       } else {
         setArtistImageUrl(null);
+        setArtistTabs((prev) =>
+          prev.map((tab) =>
+            tab.tabId === tabId ? { ...tab, artistImageUrl: null } : tab
+          )
+        );
       }
       const r = await window.deepcut.getArtistEnrichment({
         enrichmentArtistKey: resolved.enrichmentArtistKey,
@@ -166,6 +226,21 @@ export function NowPlayingPage(): ReactElement {
         setEnrich(r.cached as ArtistEnrichmentCache);
         setOfflineMsg(false);
         setEnrichErr(null);
+        setArtistTabs((prev) =>
+          prev.map((tab) =>
+            tab.tabId === tabId
+              ? {
+                  ...tab,
+                  enrich: r.cached as ArtistEnrichmentCache,
+                  enrichErr: null,
+                  resolutionError: null,
+                  offlineMsg: false,
+                  loadingInsight: false,
+                  updatedAtMs: Date.now(),
+                }
+              : tab
+          )
+        );
         return;
       }
       if (r.kind === 'stale') {
@@ -173,6 +248,21 @@ export function NowPlayingPage(): ReactElement {
         setEnrich(r.cached as ArtistEnrichmentCache);
         setOfflineMsg(false);
         setEnrichErr(null);
+        setArtistTabs((prev) =>
+          prev.map((tab) =>
+            tab.tabId === tabId
+              ? {
+                  ...tab,
+                  enrich: r.cached as ArtistEnrichmentCache,
+                  enrichErr: null,
+                  resolutionError: null,
+                  offlineMsg: false,
+                  loadingInsight: false,
+                  updatedAtMs: Date.now(),
+                }
+              : tab
+          )
+        );
         return;
       }
 
@@ -181,6 +271,27 @@ export function NowPlayingPage(): ReactElement {
       if (!navigator.onLine) {
         setLoadingInsight(false);
         setOfflineMsg(true);
+        setArtistTabs((prev) =>
+          prev.map((tab) =>
+            tab.tabId === tabId ? { ...tab, offlineMsg: true, loadingInsight: false } : tab
+          )
+        );
+        return;
+      }
+      if (!autoRefreshOnMiss) {
+        setLoadingInsight(false);
+        setEnrichErr('No cached insight. Automatic web refresh is disabled; use refresh when needed.');
+        setArtistTabs((prev) =>
+          prev.map((tab) =>
+            tab.tabId === tabId
+              ? {
+                  ...tab,
+                  enrichErr: 'No cached insight. Automatic web refresh is disabled; use refresh when needed.',
+                  loadingInsight: false,
+                }
+              : tab
+          )
+        );
         return;
       }
       setOfflineMsg(false);
@@ -195,11 +306,29 @@ export function NowPlayingPage(): ReactElement {
           return;
         }
         setEnrich(refreshed.cached as ArtistEnrichmentCache | null);
+        setArtistTabs((prev) =>
+          prev.map((tab) =>
+            tab.tabId === tabId
+              ? {
+                  ...tab,
+                  enrich: refreshed.cached as ArtistEnrichmentCache | null,
+                  enrichErr: null,
+                  loadingInsight: false,
+                  updatedAtMs: Date.now(),
+                }
+              : tab
+          )
+        );
       } catch (e) {
         if (insightFetchRunIdRef.current !== runId) {
           return;
         }
         setEnrichErr(String(e));
+        setArtistTabs((prev) =>
+          prev.map((tab) =>
+            tab.tabId === tabId ? { ...tab, enrichErr: String(e), loadingInsight: false } : tab
+          )
+        );
       } finally {
         if (insightFetchRunIdRef.current === runId) {
           setLoadingInsight(false);
@@ -210,7 +339,14 @@ export function NowPlayingPage(): ReactElement {
     return () => {
       insightFetchRunIdRef.current += 1;
     };
-  }, [cur, pb.primaryArtistDisplayName]);
+  }, [activeTabId, autoRefreshOnMiss, cur, pb.primaryArtistDisplayName, userPinnedTab]);
+
+  useEffect(() => {
+    if (cur === null) {
+      return;
+    }
+    setUserPinnedTab(false);
+  }, [cur]);
 
   const artistLabel =
     displayName ??
@@ -269,6 +405,30 @@ export function NowPlayingPage(): ReactElement {
 
       {cur !== null ? (
         <div className="panel">
+          {artistTabs.length > 0 ? (
+            <div className="search-entity-fieldset" role="tablist" aria-label="Artist insight tabs">
+              {artistTabs.map((tab) => (
+                <button
+                  key={tab.tabId}
+                  type="button"
+                  className={activeTabId === tab.tabId ? 'primary' : 'ghost'}
+                  onClick={() => {
+                    setActiveTabId(tab.tabId);
+                    setUserPinnedTab(true);
+                    setDisplayName(tab.displayName);
+                    setEnrich(tab.enrich);
+                    setEnrichErr(tab.enrichErr);
+                    setResolutionError(tab.resolutionError);
+                    setArtistImageUrl(tab.artistImageUrl);
+                    setOfflineMsg(tab.offlineMsg);
+                    setLoadingInsight(tab.loadingInsight);
+                  }}
+                >
+                  {tab.displayName}
+                </button>
+              ))}
+            </div>
+          ) : null}
           <div className="np-insights-heading-row">
             <div className="np-insights-heading-main">
               <h2 className="np-insights-heading-row-title">
@@ -291,8 +451,16 @@ export function NowPlayingPage(): ReactElement {
               <button
                 type="button"
                 className="icon-button"
-                title={refreshBusy ? 'Refreshing insights…' : 'Regenerate insights and refresh cache'}
-                aria-label={refreshBusy ? 'Refreshing insights' : 'Regenerate insights and refresh cache'}
+                title={
+                  refreshBusy
+                    ? 'Refreshing insights…'
+                    : 'Refresh insights from web/LLM and update cache'
+                }
+                aria-label={
+                  refreshBusy
+                    ? 'Refreshing insights'
+                    : 'Refresh insights from web/LLM and update cache'
+                }
                 aria-busy={refreshBusy}
                 disabled={refreshBusy || loadingInsight}
                 onClick={() => {

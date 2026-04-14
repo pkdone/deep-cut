@@ -1,7 +1,7 @@
 import type { SpotifySearchResults } from '../../application/unified-search.js';
 import type { AppSettings } from '../../domain/schemas/app-settings.js';
 import type { PlaybackSession } from '../../domain/schemas/playback-session.js';
-import type { Playlist } from '../../domain/schemas/playlist.js';
+import type { Playlist, PlaylistTreeNode } from '../../domain/schemas/playlist.js';
 import type { PlaybackArtistResolutionResult } from '../../domain/schemas/playback-artist-for-enrichment.js';
 import type { TrackRef } from '../../domain/schemas/track-ref.js';
 
@@ -41,8 +41,11 @@ export interface DeepcutApi {
   spotifySearchNext: (p: { url: string }) => Promise<SpotifySearchResults>;
   getPlaylists: () => Promise<Playlist[]>;
   savePlaylist: (p: unknown) => Promise<{ ok: boolean }>;
+  getPlaylistTree: () => Promise<PlaylistTreeNode[]>;
+  savePlaylistTree: (p: { nodes: PlaylistTreeNode[] }) => Promise<{ ok: boolean }>;
   deletePlaylist: (id: string) => Promise<{ ok: boolean }>;
   addTrackToPlaylist: (p: { playlistId: string; track: TrackRef }) => Promise<{ ok: boolean }>;
+  removeTrackFromPlaylist: (p: { playlistId: string; entryId: string }) => Promise<{ ok: boolean }>;
   getPlaybackSession: () => Promise<PlaybackSession | null>;
   savePlaybackSession: (p: PlaybackSession) => Promise<{ ok: boolean }>;
   getArtistEnrichment: (
@@ -86,6 +89,10 @@ export interface DeepcutApi {
   openExternalUrl: (url: string) => Promise<{ ok: boolean }>;
   onLibraryUpdated: (cb: () => void) => () => void;
   onLibraryScanState: (cb: (payload: { scanning: boolean }) => void) => () => void;
+  onIntegrationAutoConnectState: (
+    cb: (payload: { service: 'spotify'; status: 'connected' | 'failed'; message?: string }) => void
+  ) => () => void;
+  onGlobalShortcutTriggered: (cb: (payload: { command: string }) => void) => () => void;
 }
 
 declare global {

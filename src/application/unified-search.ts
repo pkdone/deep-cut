@@ -98,6 +98,67 @@ export type UnifiedSearchEntityType = 'artists' | 'albums' | 'tracks';
 
 const NULL_SPOTIFY_PAGING: SpotifyPagingLinks = { next: null, previous: null };
 
+function alphaByName(a: string, b: string): number {
+  return a.localeCompare(b, undefined, { sensitivity: 'base' });
+}
+
+function mergeArtistRowsAlphabetically(params: {
+  readonly spotifyArtists: readonly SpotifyArtist[];
+  readonly localArtists: readonly { name: string; trackCount: number }[];
+}): {
+  readonly spotifyArtists: SpotifyArtist[];
+  readonly localArtists: { name: string; trackCount: number }[];
+} {
+  const merged = [
+    ...params.spotifyArtists.map((artist) => ({ source: 'spotify' as const, artist })),
+    ...params.localArtists.map((artist) => ({ source: 'local' as const, artist })),
+  ].sort((a, b) => {
+    const left = a.source === 'spotify' ? a.artist.name : a.artist.name;
+    const right = b.source === 'spotify' ? b.artist.name : b.artist.name;
+    return alphaByName(left, right);
+  });
+  return {
+    spotifyArtists: merged
+      .filter((entry): entry is { source: 'spotify'; artist: SpotifyArtist } => entry.source === 'spotify')
+      .map((entry) => entry.artist),
+    localArtists: merged
+      .filter(
+        (entry): entry is { source: 'local'; artist: { name: string; trackCount: number } } =>
+          entry.source === 'local'
+      )
+      .map((entry) => entry.artist),
+  };
+}
+
+function mergeAlbumRowsAlphabetically(params: {
+  readonly spotifyAlbums: readonly SpotifyAlbum[];
+  readonly localAlbums: readonly LocalSearchAlbum[];
+}): {
+  readonly spotifyAlbums: SpotifyAlbum[];
+  readonly localAlbums: LocalSearchAlbum[];
+} {
+  const merged = [
+    ...params.spotifyAlbums.map((album) => ({ source: 'spotify' as const, album })),
+    ...params.localAlbums.map((album) => ({ source: 'local' as const, album })),
+  ].sort((a, b) => {
+    const left = a.source === 'spotify' ? a.album.name : a.album.album;
+    const right = b.source === 'spotify' ? b.album.name : b.album.album;
+    return alphaByName(left, right);
+  });
+  return {
+    spotifyAlbums: merged
+      .filter((entry): entry is { source: 'spotify'; album: SpotifyAlbum } => entry.source === 'spotify')
+      .map((entry) => entry.album),
+    localAlbums: merged
+      .filter((entry): entry is { source: 'local'; album: LocalSearchAlbum } => entry.source === 'local')
+      .map((entry) => entry.album),
+  };
+}
+
+function sortTracksAlphabetically(rows: readonly UnifiedSearchRow[]): UnifiedSearchRow[] {
+  return [...rows].sort((a, b) => alphaByName(a.primaryTitle, b.primaryTitle));
+}
+
 export function getSearchDebounceMs(): number {
   return DEBOUNCE_MS;
 }
@@ -238,26 +299,30 @@ function buildUnifiedSearchFull(params: {
       localAlbumMap.set(albumKey, { artist: t.artist, album: t.album, trackCount: 1 });
     }
   }
-  const localArtists = [...localArtistMap.entries()]
+  const localArtistsRaw = [...localArtistMap.entries()]
     .map(([name, trackCount]) => ({ name, trackCount }))
     .filter((a) => q === '' || a.name.toLowerCase().includes(q))
-    .sort((a, b) => b.trackCount - a.trackCount || a.name.localeCompare(b.name))
+    .sort((a, b) => alphaByName(a.name, b.name))
     .slice(0, MAX_UNIFIED_SECTION_ITEMS);
 
-  const localAlbums = [...localAlbumMap.values()]
+  const localAlbumsRaw = [...localAlbumMap.values()]
     .filter(
       (x) =>
         q === '' ||
         x.artist.toLowerCase().includes(q) ||
         x.album.toLowerCase().includes(q)
     )
-    .sort(
-      (a, b) =>
-        b.trackCount - a.trackCount ||
-        a.album.localeCompare(b.album) ||
-        a.artist.localeCompare(b.artist)
-    )
+    .sort((a, b) => alphaByName(a.album, b.album) || alphaByName(a.artist, b.artist))
     .slice(0, MAX_UNIFIED_SECTION_ITEMS);
+
+  const artistsMerged = mergeArtistRowsAlphabetically({
+    spotifyArtists,
+    localArtists: localArtistsRaw,
+  });
+  const albumsMerged = mergeAlbumRowsAlphabetically({
+    spotifyAlbums,
+    localAlbums: localAlbumsRaw,
+  });
 
   const usedLocal = new Set<string>();
   const spotifyRows = mergeAdditionalSpotifyTracks(spotifyTracks, localsFiltered, usedLocal);
@@ -280,7 +345,7 @@ function buildUnifiedSearchFull(params: {
     });
   }
 
-  const cappedRows = rows.slice(0, MAX_UNIFIED_SECTION_ITEMS);
+  const cappedRows = sortTracksAlphabetically(rows).slice(0, MAX_UNIFIED_SECTION_ITEMS);
 
   const playlists: SpotifyPlaylist[] = [...spotifyPlaylistsFromApi];
   for (const p of params.appPlaylists) {
@@ -292,12 +357,12 @@ function buildUnifiedSearchFull(params: {
   const playlistCap = playlists.slice(0, MAX_UNIFIED_SECTION_ITEMS);
 
   return {
-    artists: spotifyArtists,
-    albums: spotifyAlbums,
+    artists: artistsMerged.spotifyArtists,
+    albums: albumsMerged.spotifyAlbums,
     tracks: cappedRows,
     playlists: playlistCap,
-    localArtists,
-    localAlbums,
+    localArtists: artistsMerged.localArtists,
+    localAlbums: albumsMerged.localAlbums,
     spotifyPaging: spotify?.paging ?? null,
     usedLocalTrackIds: [...usedLocal],
   };
@@ -315,21 +380,22 @@ function buildUnifiedSearchArtistsOnly(params: {
   for (const t of localsFiltered) {
     localArtistMap.set(t.artist, (localArtistMap.get(t.artist) ?? 0) + 1);
   }
-  const localArtists = [...localArtistMap.entries()]
+  const localArtistsRaw = [...localArtistMap.entries()]
     .map(([name, trackCount]) => ({ name, trackCount }))
     .filter((a) => q === '' || a.name.toLowerCase().includes(q))
-    .sort((a, b) => b.trackCount - a.trackCount || a.name.localeCompare(b.name))
+    .sort((a, b) => alphaByName(a.name, b.name))
     .slice(0, MAX_UNIFIED_SECTION_ITEMS);
 
   const spotify = params.spotify;
-  const spotifyArtists = spotify?.artists ?? [];
+  const spotifyArtists = (spotify?.artists ?? []).slice().sort((a, b) => alphaByName(a.name, b.name));
+  const artistsMerged = mergeArtistRowsAlphabetically({ spotifyArtists, localArtists: localArtistsRaw });
 
   return {
-    artists: spotifyArtists,
+    artists: artistsMerged.spotifyArtists,
     albums: [],
     tracks: [],
     playlists: [],
-    localArtists,
+    localArtists: artistsMerged.localArtists,
     localAlbums: [],
     spotifyPaging: spotify
       ? {
@@ -361,31 +427,27 @@ function buildUnifiedSearchAlbumsOnly(params: {
       localAlbumMap.set(albumKey, { artist: t.artist, album: t.album, trackCount: 1 });
     }
   }
-  const localAlbums = [...localAlbumMap.values()]
+  const localAlbumsRaw = [...localAlbumMap.values()]
     .filter(
       (x) =>
         q === '' ||
         x.artist.toLowerCase().includes(q) ||
         x.album.toLowerCase().includes(q)
     )
-    .sort(
-      (a, b) =>
-        b.trackCount - a.trackCount ||
-        a.album.localeCompare(b.album) ||
-        a.artist.localeCompare(b.artist)
-    )
+    .sort((a, b) => alphaByName(a.album, b.album) || alphaByName(a.artist, b.artist))
     .slice(0, MAX_UNIFIED_SECTION_ITEMS);
 
   const spotify = params.spotify;
-  const spotifyAlbums = spotify?.albums ?? [];
+  const spotifyAlbums = (spotify?.albums ?? []).slice().sort((a, b) => alphaByName(a.name, b.name));
+  const albumsMerged = mergeAlbumRowsAlphabetically({ spotifyAlbums, localAlbums: localAlbumsRaw });
 
   return {
     artists: [],
-    albums: spotifyAlbums,
+    albums: albumsMerged.spotifyAlbums,
     tracks: [],
     playlists: [],
     localArtists: [],
-    localAlbums,
+    localAlbums: albumsMerged.localAlbums,
     spotifyPaging: spotify
       ? {
           artists: NULL_SPOTIFY_PAGING,
@@ -432,7 +494,7 @@ function buildUnifiedSearchTracksOnly(params: {
     });
   }
 
-  const cappedRows = rows.slice(0, MAX_UNIFIED_SECTION_ITEMS);
+  const cappedRows = sortTracksAlphabetically(rows).slice(0, MAX_UNIFIED_SECTION_ITEMS);
 
   const playlists: SpotifyPlaylist[] = [...spotifyPlaylistsFromApi];
   for (const p of params.appPlaylists) {

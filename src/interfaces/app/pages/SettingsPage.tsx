@@ -142,6 +142,7 @@ export function SettingsPage(): React.ReactElement {
   if (!s) {
     return <p>Loading…</p>;
   }
+  const firstRun = searchParams.get('firstRun') === '1' && !(s.firstRunWizardCompleted ?? false);
 
   const spotifyConnected = spotifyStatus?.connected ?? false;
   const canConnectSpotify = !spotifyAuthBusy && !spotifyConnected;
@@ -155,6 +156,24 @@ export function SettingsPage(): React.ReactElement {
 
   return (
     <div className="settings-page">
+      {firstRun ? (
+        <div className="panel">
+          <h2>Welcome to DeepCut</h2>
+          <p className="subtitle">
+            Complete Spotify and LLM setup here so Search, Now Playing insights, and playback features
+            are fully enabled.
+          </p>
+          <button
+            type="button"
+            className="primary"
+            onClick={() => {
+              void persistSettings({ ...s, firstRunWizardCompleted: true });
+            }}
+          >
+            Mark setup guide as seen
+          </button>
+        </div>
+      ) : null}
       {saveNotice !== null ? (
         <div className="settings-save-notice" role="status" aria-live="polite">
           {saveNotice}
@@ -164,12 +183,14 @@ export function SettingsPage(): React.ReactElement {
         <h2 id="settings-heading-database" tabIndex={-1}>
           Database
         </h2>
+        <p className="subtitle">Controls app data persistence and startup health checks.</p>
         <p>Status: {mongo}</p>
       </div>
       <div id="settings-panel-local" className="panel">
         <h2 id="settings-heading-local" tabIndex={-1}>
           Local music folders
         </h2>
+        <p className="subtitle">Configure folders DeepCut scans for local MP3 tracks.</p>
         <ul className="folder-list">
           {s.localMusicFolders.map((f, index) => (
             <li key={`${f}::${index}`} className="folder-list-item">
@@ -222,11 +243,13 @@ export function SettingsPage(): React.ReactElement {
         <h2 id="settings-heading-spotify" tabIndex={-1}>
           Spotify API
         </h2>
+        <p className="subtitle">Configure Spotify auth and choose playback transport mode.</p>
         <div className="settings-field">
           <label htmlFor="spotify-client-id">Client ID</label>
           <input
             id="spotify-client-id"
             autoComplete="off"
+            title="Spotify app Client ID from the Spotify Developer Dashboard."
             value={s.spotifyClientId ?? ''}
             onChange={(e) => { setS({ ...s, spotifyClientId: e.target.value }); }}
           />
@@ -237,10 +260,45 @@ export function SettingsPage(): React.ReactElement {
             id="spotify-client-secret"
             type="password"
             autoComplete="off"
+            title="Spotify app Client Secret from the Spotify Developer Dashboard."
             value={s.spotifyClientSecret ?? ''}
             onChange={(e) => { setS({ ...s, spotifyClientSecret: e.target.value }); }}
           />
         </div>
+        <fieldset className="search-entity-fieldset">
+          <legend>Spotify playback mode</legend>
+          <label className="search-entity-label" title="Existing Spotify Connect transport (default).">
+            <input
+              type="radio"
+              name="spotifyPlaybackMode"
+              checked={(s.spotifyPlaybackMode ?? 'connect') === 'connect'}
+              onChange={() => {
+                void persistSettings({ ...s, spotifyPlaybackMode: 'connect' });
+              }}
+            />
+            Spotify Connect (default)
+          </label>
+          <label className="search-entity-label" title="Uses integrated Web Playback transport path.">
+            <input
+              type="radio"
+              name="spotifyPlaybackMode"
+              checked={(s.spotifyPlaybackMode ?? 'connect') === 'web-sdk'}
+              onChange={() => {
+                void persistSettings({ ...s, spotifyPlaybackMode: 'web-sdk' });
+              }}
+            />
+            Web Playback
+          </label>
+        </fieldset>
+        <p className="subtitle">
+          For sound on this computer when Web Playback cannot start (for example on Linux without
+          Widevine DRM), leave the Spotify desktop app running. DeepCut will prefer it over your phone
+          or the Chrome &quot;Web Player&quot; tab.
+        </p>
+        <label className="search-entity-label" title="If enabled, startup attempts Spotify login when credentials exist.">
+          <input type="checkbox" checked={true} readOnly />
+          Auto-connect at startup when credentials are set
+        </label>
         <div className="settings-actions">
           <button
             type="button"
@@ -269,7 +327,7 @@ export function SettingsPage(): React.ReactElement {
                 });
             }}
           >
-            Connect Spotify (browser OAuth)
+            Connect Spotify
           </button>
           <button
             type="button"
@@ -302,10 +360,22 @@ export function SettingsPage(): React.ReactElement {
         <h2 id="settings-heading-llm" tabIndex={-1}>
           LLM
         </h2>
+        <p className="subtitle">Controls artist insight provider and API credentials.</p>
+        <label className="search-entity-label" title="When disabled, Now Playing only serves cached insights unless manually refreshed.">
+          <input
+            type="checkbox"
+            checked={s.nowPlayingAutoRefreshOnMiss ?? false}
+            onChange={(e) => {
+              void persistSettings({ ...s, nowPlayingAutoRefreshOnMiss: e.target.checked });
+            }}
+          />
+          Auto-refresh Now Playing insights on cache miss
+        </label>
         <div className="settings-field">
           <label htmlFor="llm-provider">Provider</label>
           <select
             id="llm-provider"
+            title="Select the LLM provider used for artist enrichment."
             value={s.llmProvider}
             onChange={(e) => {
               setLlmPingError(null);

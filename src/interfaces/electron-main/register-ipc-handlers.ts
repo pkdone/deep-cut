@@ -21,6 +21,7 @@ import { MongoArtistImageRepository } from '../../infrastructure/persistence/mon
 import { MongoLocalTrackRepository } from '../../infrastructure/persistence/mongo-local-track-repository.js';
 import { MongoPlaybackSessionRepository } from '../../infrastructure/persistence/mongo-playback-session-repository.js';
 import { MongoPlaylistRepository } from '../../infrastructure/persistence/mongo-playlist-repository.js';
+import { MongoPlaylistTreeRepository } from '../../infrastructure/persistence/mongo-playlist-tree-repository.js';
 import {
   fetchSpotifySearchUrl,
   getArtistAlbums,
@@ -41,9 +42,11 @@ import {
   resolvePlaybackArtistForEnrichmentPayload,
   savePlaybackPayload,
   savePlaylistPayload,
+  savePlaylistTreePayload,
   saveSettingsPayload,
   unifiedSearchPayload,
   spotifySearchNextPayload,
+  removeTrackFromPlaylistPayload,
 } from '../ipc-contract.js';
 
 let spotifyAccessToken: string | null = null;
@@ -65,6 +68,9 @@ function defaultSettings(): AppSettings {
   return {
     localMusicFolders: [],
     llmProvider: 'none',
+    spotifyPlaybackMode: 'connect',
+    nowPlayingAutoRefreshOnMiss: false,
+    firstRunWizardCompleted: false,
   };
 }
 
@@ -308,6 +314,14 @@ export function registerIpcHandlers(params: {
     const tokens = await startSpotifyAuthorization({ clientId: cid, clientSecret: sec });
     spotifyAccessToken = tokens.accessToken;
     spotifyExpiresAtMs = tokens.expiresAtMs;
+    const mainWindow = getMainWindow();
+    if (mainWindow !== null && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) {
+        mainWindow.restore();
+      }
+      mainWindow.show();
+      mainWindow.focus();
+    }
     return { ok: true as const, expiresAtMs: tokens.expiresAtMs };
   });
 
@@ -462,6 +476,27 @@ export function registerIpcHandlers(params: {
     return [...(await playlistRepo.findAll())];
   });
 
+  ipcMain.handle(IPC_CHANNELS.getPlaylistTree, async () => {
+    const uri = getMongoUri();
+    const client = await getMongoClient(uri);
+    const db = client.db();
+    const treeRepo = new MongoPlaylistTreeRepository(db.collection(MongoPlaylistTreeRepository.collectionName));
+    return treeRepo.getTree();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.savePlaylistTree, async (_e, raw: unknown) => {
+    const parsed = savePlaylistTreePayload.safeParse(raw);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid playlist tree payload');
+    }
+    const uri = getMongoUri();
+    const client = await getMongoClient(uri);
+    const db = client.db();
+    const treeRepo = new MongoPlaylistTreeRepository(db.collection(MongoPlaylistTreeRepository.collectionName));
+    await treeRepo.saveTree(parsed.data.nodes);
+    return { ok: true as const };
+  });
+
   ipcMain.handle(IPC_CHANNELS.savePlaylist, async (_e, raw: unknown) => {
     const parsed = savePlaylistPayload.safeParse(raw);
     if (!parsed.success) {
@@ -524,6 +559,28 @@ export function registerIpcHandlers(params: {
     const updated: Playlist = playlistSchema.parse({
       ...existing,
       entries: [...existing.entries, entry],
+      updatedAt: new Date(),
+    });
+    await playlistRepo.save(updated);
+    return { ok: true as const };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.removeTrackFromPlaylist, async (_e, raw: unknown) => {
+    const parsed = removeTrackFromPlaylistPayload.safeParse(raw);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid remove-track payload');
+    }
+    const uri = getMongoUri();
+    const client = await getMongoClient(uri);
+    const db = client.db();
+    const playlistRepo = new MongoPlaylistRepository(db.collection(MongoPlaylistRepository.collectionName));
+    const existing = await playlistRepo.findById(parsed.data.playlistId);
+    if (!existing) {
+      throw new ValidationError('Playlist not found');
+    }
+    const updated: Playlist = playlistSchema.parse({
+      ...existing,
+      entries: existing.entries.filter((entry) => entry.entryId !== parsed.data.entryId),
       updatedAt: new Date(),
     });
     await playlistRepo.save(updated);
@@ -783,6 +840,37 @@ export function registerIpcHandlers(params: {
         db.collection(MongoAppSettingsRepository.collectionName)
       );
       const s = (await settingsRepo.get()) ?? defaultSettings();
+      const hasSpotifyCredentials =
+        (s.spotifyClientId?.trim() ?? '') !== '' && (s.spotifyClientSecret?.trim() ?? '') !== '';
+      if (hasSpotifyCredentials) {
+        const spotifyClientId = s.spotifyClientId?.trim() ?? '';
+        const spotifyClientSecret = s.spotifyClientSecret?.trim() ?? '';
+        try {
+          const tokens = await startSpotifyAuthorization({
+            clientId: spotifyClientId,
+            clientSecret: spotifyClientSecret,
+          });
+          spotifyAccessToken = tokens.accessToken;
+          spotifyExpiresAtMs = tokens.expiresAtMs;
+          const mainWindow = getMainWindow();
+          if (mainWindow !== null && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send(IPC_CHANNELS.integrationAutoConnectState, {
+              service: 'spotify',
+              status: 'connected',
+            });
+          }
+        } catch (error) {
+          logWarn('Spotify auto-connect failed', { error: String(error) });
+          const mainWindow = getMainWindow();
+          if (mainWindow !== null && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send(IPC_CHANNELS.integrationAutoConnectState, {
+              service: 'spotify',
+              status: 'failed',
+              message: String(error),
+            });
+          }
+        }
+      }
       await setupWatch(s.localMusicFolders);
     } catch (e) {
       logError('Initial folder watch setup failed', { e: String(e) });

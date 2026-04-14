@@ -122,11 +122,11 @@ Suggested order (from PRD §25, refined):
 2. **MongoDB + settings**: `MONGODB_URI`, `db:init`, connection health in Settings, **ConfigurationError** path, persist minimal settings.
 3. **Local library**: folder pick, MP3 scan (**do not follow symlinks**), tags/artwork, watch + reindex (simple remove/reimport), domain + repos + UI browse path; design for **~2,500 albums** local scale assumption.
 4. **Local playback**: Now Playing minimal controls, session fields in DB, **restore on restart** (track, position, context).
-5. **Spotify**: **browser OAuth on each cold start**, search API, metadata; attempt **in-app playback**; failure behaviour per PRD; Settings status.
+5. **Spotify**: **browser OAuth on each cold start** with startup auto-connect attempt when credentials exist, search API, metadata; implement mode toggle (`Spotify Connect` default, optional `Web Playback SDK`) with shared fallback behaviour.
 6. **Unified search + merge**: grouped results, filters, fuzzy duplicate merge, Spotify-preferred play on merged rows; **Spotify-primary title** with optional **subtitle** for differing local metadata.
-7. **Playlists**: app playlists in MongoDB, mixed playback, reorder/remove.
+7. **Playlists**: app playlists in MongoDB plus hierarchical folder tree, mixed playback, reorder/remove, inline CRUD actions.
 8. **Artist enrichment**: Grounded **retrieval + synthesis** adapters (OpenAI Responses + web search, Anthropic Messages + web search); domain split (`ArtistEvidenceBundle`, **`ArtistInsightsRecord`** persisted aggregate with validation status + warnings); JSON validation, cache + refresh on **Now Playing**, offline cached read. **Persistence:** Zod-validated documents in Mongo; **`db:init`** ensures the collection + **unique index** on `enrichmentArtistKey` (no server-side JSON Schema on the payload body yet). **Breaking payload / `docSchemaVersion` changes:** no migration script in-repo; reset dev DB with **`db:teardown`** then **`db:init`**, or drop incompatible cache documents, before relying on the new shape. **Optional live integration tests:** `npm run test:integration` (loads `.env.local` via Jest setup); set **`OPENAI_API_KEY`** / **`ANTHROPIC_API_KEY`** there; **`npm test`** stays keyless and excludes `*.int.test.ts`.
-9. **Hardening**: media keys, **fixed-default** global shortcuts, local logs, `.deb`, E2E suite for PRD flows.
+9. **Hardening**: media keys, **fixed-default** global shortcuts, MPRIS integration hook, local logs, `.deb`, Playwright E2E suite for PRD flows.
 
 Dependencies: 3 before 4; 5 before 6–7; 8 can overlap 5+ after cache/settings exist. **Exact parallelisation** is flexible; keep slices **vertically shippable** where possible.
 
@@ -182,7 +182,7 @@ Illustrative—not exhaustive. Names will evolve with ubiquitous language.
 | **CI default** | `npm run validate` (aggregate: lint, test, build—as defined in `package.json` when added) | Gate merges; matches project rule |
 | **Unit** | Fuzzy matching, enrichment JSON parsing/validation, cache TTL logic, pure domain services | Fast feedback, high-risk logic |
 | **Integration** | MongoDB repositories with test DB (`db:init` in fixture), Spotify/LLM **contract tests** with mocked HTTP; **optional** `npm run test:integration` for live LLM retrieval (keys in `.env.local`; see `.env.example`) | Persistence and adapter correctness |
-| **E2E** | Playwright (or chosen): connect Spotify (or stub), scan folder, search/play, playlist CRUD, **Now Playing** artist intelligence (enrichment) while playing | PRD §20.2 flows |
+| **E2E** | Playwright: smoke route coverage plus core flows (connect Spotify or stub, scan folder, search/play, playlist CRUD, **Now Playing** artist intelligence) | PRD §20.2 flows |
 | **Manual** | Ubuntu 24.04+: `.deb` install, media keys, offline aeroplane mode for local+cache | Packaging and desktop integration |
 
 **Definition of done for v1**: PRD **§23 Release Readiness Gate** + green **`npm run validate`** + agreed E2E subset green in CI (with documented secrets strategy for Spotify in CI—often **skipped** or **mocked**).

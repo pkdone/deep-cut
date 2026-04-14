@@ -43,10 +43,16 @@ export function PlaylistPage(): React.ReactElement {
     if (!pl) {
       return;
     }
-    setPl({
+    const next = {
       ...pl,
       entries: pl.entries.filter((e) => e.entryId !== entryId),
       updatedAt: new Date(),
+    };
+    setPl(next);
+    void window.deepcut.savePlaylist({
+      playlistId: next.playlistId,
+      name: next.name,
+      entries: next.entries,
     });
   };
 
@@ -129,6 +135,30 @@ export function PlaylistPage(): React.ReactElement {
           type="button"
           className="ghost"
           onClick={() => {
+            if (pl.entries.length <= 1) {
+              return;
+            }
+            const moved = [...pl.entries];
+            const first = moved.shift();
+            if (first === undefined) {
+              return;
+            }
+            moved.push(first);
+            const next = { ...pl, entries: moved, updatedAt: new Date() };
+            setPl(next);
+            void window.deepcut.savePlaylist({
+              playlistId: next.playlistId,
+              name: next.name,
+              entries: next.entries,
+            });
+          }}
+        >
+          Rotate order
+        </button>
+        <button
+          type="button"
+          className="ghost"
+          onClick={() => {
             const ok = window.confirm(
               `Delete playlist "${pl.name}"? This cannot be undone.`
             );
@@ -163,6 +193,13 @@ export function PlaylistPage(): React.ReactElement {
               onClick={() => void pb.playRef(e.track, { kind: 'playlist', playlistId: pl.playlistId })}
             >
               Play
+            </button>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => { void pb.enqueueRef(e.track); }}
+            >
+              Add to Q
             </button>
           </div>
         ))}

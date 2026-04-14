@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactElement } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { usePlayback } from '../playback/PlaybackProvider.js';
+import { LocalLibraryBreadcrumb } from '../components/LocalLibraryBreadcrumb.js';
 
 export function ArtistPage(): ReactElement {
   const { artistId = '' } = useParams();
@@ -23,6 +24,12 @@ export function ArtistPage(): ReactElement {
 
   return (
     <div>
+      <LocalLibraryBreadcrumb
+        segments={[
+          { label: 'Search', to: '/search' },
+          { label: name },
+        ]}
+      />
       <h1>{name}</h1>
 
       <div className="panel">
@@ -32,7 +39,9 @@ export function ArtistPage(): ReactElement {
             <h3>Albums</h3>
             {catalog.albums.map((al) => (
               <div key={al.id} className="list-row">
-                <Link to={`/album/${al.id}`}>
+                <Link
+                  to={`/album/${al.id}?artistId=${encodeURIComponent(artistId)}&artistName=${encodeURIComponent(name)}`}
+                >
                   {al.name} {al.releaseYear ? `(${al.releaseYear})` : ''}
                 </Link>
               </div>
@@ -45,19 +54,34 @@ export function ArtistPage(): ReactElement {
               catalog.topTracks.map((t) => (
                 <div key={t.id} className="list-row">
                   <span>{t.name}</span>
-                  <button
-                    type="button"
-                    className="primary"
-                    onClick={() =>
-                      void pb.playRef({
-                        source: 'spotify',
-                        spotifyId: t.id,
-                        spotifyUri: t.uri,
-                      })
-                    }
-                  >
-                    Play
-                  </button>
+                  <div style={{ display: 'flex', gap: '0.35rem' }}>
+                    <button
+                      type="button"
+                      className="primary"
+                      onClick={() =>
+                        void pb.playRef({
+                          source: 'spotify',
+                          spotifyId: t.id,
+                          spotifyUri: t.uri,
+                        })
+                      }
+                    >
+                      Play
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost"
+                      onClick={() =>
+                        void pb.enqueueRef({
+                          source: 'spotify',
+                          spotifyId: t.id,
+                          spotifyUri: t.uri,
+                        })
+                      }
+                    >
+                      Add to Q
+                    </button>
+                  </div>
                 </div>
               ))
             ) : (
