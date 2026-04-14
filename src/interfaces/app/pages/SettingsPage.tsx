@@ -24,9 +24,18 @@ export function SettingsPage(): React.ReactElement {
   const [searchParams] = useSearchParams();
   const [s, setS] = useState<AppSettings | null>(null);
   const [mongo, setMongo] = useState<string>('');
+  const [spotifyStatus, setSpotifyStatus] = useState<{ connected: boolean; expiresAtMs: number } | null>(
+    null
+  );
+  const [spotifyAuthBusy, setSpotifyAuthBusy] = useState(false);
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
   const [llmPingError, setLlmPingError] = useState<string | null>(null);
   const saveNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const refreshSpotifyStatus = useCallback(async (): Promise<void> => {
+    const status = await window.deepcut.spotifyStatus();
+    setSpotifyStatus(status);
+  }, []);
 
   const showSaveNotice = useCallback((): void => {
     if (saveNoticeTimerRef.current !== null) {
@@ -83,7 +92,8 @@ export function SettingsPage(): React.ReactElement {
     void window.deepcut.mongoPing().then((r) => {
       setMongo(r.ok ? 'Connected' : r.message);
     });
-  }, []);
+    void refreshSpotifyStatus();
+  }, [refreshSpotifyStatus]);
 
   useEffect(() => {
     if (s === null) {
@@ -131,6 +141,16 @@ export function SettingsPage(): React.ReactElement {
 
   if (!s) {
     return <p>Loading…</p>;
+  }
+
+  const spotifyConnected = spotifyStatus?.connected ?? false;
+  const canConnectSpotify = !spotifyAuthBusy && !spotifyConnected;
+  const canDisconnectSpotify = !spotifyAuthBusy && spotifyConnected;
+  let spotifySessionStatusText = 'No active Spotify session.';
+  if (spotifyAuthBusy) {
+    spotifySessionStatusText = 'Updating Spotify session…';
+  } else if (spotifyConnected) {
+    spotifySessionStatusText = 'Spotify session is connected.';
   }
 
   return (
@@ -232,10 +252,21 @@ export function SettingsPage(): React.ReactElement {
           <button
             type="button"
             className="primary"
+            disabled={!canConnectSpotify}
+            aria-disabled={!canConnectSpotify}
             onClick={() => {
-              void window.deepcut.spotifyStartLogin().then(() => {
-                window.dispatchEvent(new CustomEvent(INTEGRATION_STATUS_REFRESH_EVENT));
-              });
+              if (!canConnectSpotify) {
+                return;
+              }
+              setSpotifyAuthBusy(true);
+              void window.deepcut.spotifyStartLogin()
+                .then(async () => {
+                  window.dispatchEvent(new CustomEvent(INTEGRATION_STATUS_REFRESH_EVENT));
+                  await refreshSpotifyStatus();
+                })
+                .finally(() => {
+                  setSpotifyAuthBusy(false);
+                });
             }}
           >
             Connect Spotify (browser OAuth)
@@ -243,15 +274,29 @@ export function SettingsPage(): React.ReactElement {
           <button
             type="button"
             className="ghost"
+            disabled={!canDisconnectSpotify}
+            aria-disabled={!canDisconnectSpotify}
             onClick={() => {
-              void window.deepcut.spotifyLogout().then(() => {
-                window.dispatchEvent(new CustomEvent(INTEGRATION_STATUS_REFRESH_EVENT));
-              });
+              if (!canDisconnectSpotify) {
+                return;
+              }
+              setSpotifyAuthBusy(true);
+              void window.deepcut.spotifyLogout()
+                .then(async () => {
+                  window.dispatchEvent(new CustomEvent(INTEGRATION_STATUS_REFRESH_EVENT));
+                  await refreshSpotifyStatus();
+                })
+                .finally(() => {
+                  setSpotifyAuthBusy(false);
+                });
             }}
           >
             Disconnect session
           </button>
         </div>
+        <p className="subtitle" role="status" aria-live="polite">
+          {spotifySessionStatusText}
+        </p>
       </div>
       <div id="settings-panel-llm" className="panel">
         <h2 id="settings-heading-llm" tabIndex={-1}>

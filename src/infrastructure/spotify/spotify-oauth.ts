@@ -11,6 +11,9 @@ const SCOPES = [
   'user-modify-playback-state',
   'playlist-read-private',
 ].join(' ');
+const SPOTIFY_OAUTH_REDIRECT_HOST = '127.0.0.1';
+const SPOTIFY_OAUTH_REDIRECT_PORT = 8888;
+const SPOTIFY_OAUTH_REDIRECT_PATH = '/callback';
 
 export interface SpotifyTokens {
   readonly accessToken: string;
@@ -24,7 +27,7 @@ export async function startSpotifyAuthorization(params: {
   const { clientId, clientSecret } = params;
   const server = http.createServer();
   const port = await new Promise<number>((resolve, reject) => {
-    server.listen(0, '127.0.0.1', () => {
+    server.listen(SPOTIFY_OAUTH_REDIRECT_PORT, SPOTIFY_OAUTH_REDIRECT_HOST, () => {
       const addr = server.address();
       if (addr && typeof addr === 'object') {
         resolve(addr.port);
@@ -32,10 +35,21 @@ export async function startSpotifyAuthorization(params: {
         reject(new Error('No address'));
       }
     });
-    server.on('error', reject);
+    server.on('error', (error) => {
+      const e = error as NodeJS.ErrnoException;
+      if (e.code === 'EADDRINUSE') {
+        reject(
+          new ExternalServiceError(
+            `Spotify OAuth callback port ${SPOTIFY_OAUTH_REDIRECT_PORT} is already in use.`
+          )
+        );
+        return;
+      }
+      reject(error);
+    });
   });
 
-  const redirectUri = `http://127.0.0.1:${port}/callback`;
+  const redirectUri = `http://${SPOTIFY_OAUTH_REDIRECT_HOST}:${port}${SPOTIFY_OAUTH_REDIRECT_PATH}`;
   const authUrl = new URL('https://accounts.spotify.com/authorize');
   authUrl.searchParams.set('client_id', clientId);
   authUrl.searchParams.set('response_type', 'code');
@@ -47,8 +61,8 @@ export async function startSpotifyAuthorization(params: {
       if (!req.url) {
         return;
       }
-      const u = new URL(req.url, `http://127.0.0.1:${port}`);
-      if (u.pathname !== '/callback') {
+      const u = new URL(req.url, `http://${SPOTIFY_OAUTH_REDIRECT_HOST}:${port}`);
+      if (u.pathname !== SPOTIFY_OAUTH_REDIRECT_PATH) {
         res.writeHead(404);
         res.end();
         return;

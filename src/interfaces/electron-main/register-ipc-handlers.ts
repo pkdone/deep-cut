@@ -362,13 +362,26 @@ export function registerIpcHandlers(params: {
 
   ipcMain.handle(IPC_CHANNELS.spotifyArtistCatalog, async (_e, artistId: string) => {
     if (!spotifyAccessToken || Date.now() >= spotifyExpiresAtMs - 60_000) {
-      return { albums: [] as { id: string; name: string; releaseYear?: number }[], topTracks: [] as { id: string; name: string; uri: string; durationMs: number }[] };
+      return {
+        albums: [] as { id: string; name: string; releaseYear?: number }[],
+        topTracks: [] as { id: string; name: string; uri: string; durationMs: number }[],
+        hasMoreAlbums: false,
+      };
     }
-    const [albums, topTracks] = await Promise.all([
+    const [albumsResult, topTracksResult] = await Promise.allSettled([
       getArtistAlbums(spotifyAccessToken, artistId),
       getArtistTopTracks(spotifyAccessToken, artistId),
     ]);
-    return { albums, topTracks };
+    const albums = albumsResult.status === 'fulfilled' ? albumsResult.value.albums : [];
+    const hasMoreAlbums = albumsResult.status === 'fulfilled' ? albumsResult.value.hasMore : false;
+    const topTracks = topTracksResult.status === 'fulfilled' ? topTracksResult.value : [];
+    if (albumsResult.status === 'rejected') {
+      logWarn('Spotify artist albums unavailable', { artistId, error: String(albumsResult.reason) });
+    }
+    if (topTracksResult.status === 'rejected') {
+      logWarn('Spotify artist top tracks unavailable', { artistId, error: String(topTracksResult.reason) });
+    }
+    return { albums, topTracks, hasMoreAlbums };
   });
 
   ipcMain.handle(IPC_CHANNELS.unifiedSearch, async (_e, raw: unknown) => {
@@ -377,6 +390,7 @@ export function registerIpcHandlers(params: {
       throw new ValidationError('Invalid search payload');
     }
     const { query, sourceFilter, entityType } = parsed.data;
+    const spotifyType = SPOTIFY_SEARCH_API_TYPE[entityType];
     const uri = getMongoUri();
     const client = await getMongoClient(uri);
     const db = client.db();
@@ -392,7 +406,7 @@ export function registerIpcHandlers(params: {
         spotify = await spotifySearch(
           spotifyAccessToken,
           query,
-          SPOTIFY_SEARCH_API_TYPE[entityType]
+          spotifyType
         );
       } catch (e) {
         logWarn('Spotify search failed', { e: String(e) });
@@ -408,12 +422,13 @@ export function registerIpcHandlers(params: {
     });
 
     if (sourceFilter === 'spotify') {
-      return {
+      const spotifyOnly = {
         ...built,
         tracks: built.tracks.filter((t) => t.spotify !== undefined),
         localArtists: [],
         localAlbums: [],
       };
+      return spotifyOnly;
     }
     if (sourceFilter === 'local') {
       return {

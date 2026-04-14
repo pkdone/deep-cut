@@ -493,6 +493,19 @@ button.primary {
   border-radius: 6px;
 }
 
+button.primary:disabled,
+button.ghost:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.primary:disabled:hover,
+button.ghost:disabled:hover {
+  background: inherit;
+  border-color: var(--border);
+  color: inherit;
+}
+
 button.ghost {
   background: transparent;
   border: 1px solid var(--border);
