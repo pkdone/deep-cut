@@ -20,8 +20,12 @@ contextBridge.exposeInMainWorld('deepcut', {
   spotifySearchNext: async (p: unknown) => ipcRenderer.invoke(IPC_CHANNELS.spotifySearchNext, p),
   getPlaylists: async () => ipcRenderer.invoke(IPC_CHANNELS.getPlaylists),
   savePlaylist: async (p: unknown) => ipcRenderer.invoke(IPC_CHANNELS.savePlaylist, p),
+  getPlaylistTree: async () => ipcRenderer.invoke(IPC_CHANNELS.getPlaylistTree),
+  savePlaylistTree: async (p: unknown) => ipcRenderer.invoke(IPC_CHANNELS.savePlaylistTree, p),
   deletePlaylist: async (id: string) => ipcRenderer.invoke(IPC_CHANNELS.deletePlaylist, id),
   addTrackToPlaylist: async (p: unknown) => ipcRenderer.invoke(IPC_CHANNELS.addTrackToPlaylist, p),
+  removeTrackFromPlaylist: async (p: unknown) =>
+    ipcRenderer.invoke(IPC_CHANNELS.removeTrackFromPlaylist, p),
   getPlaybackSession: async () => ipcRenderer.invoke(IPC_CHANNELS.getPlaybackSession),
   savePlaybackSession: async (p: unknown) => ipcRenderer.invoke(IPC_CHANNELS.savePlaybackSession, p),
   getArtistEnrichment: async (p: unknown) => ipcRenderer.invoke(IPC_CHANNELS.getArtistEnrichment, p),
@@ -61,6 +65,31 @@ contextBridge.exposeInMainWorld('deepcut', {
     ipcRenderer.on(IPC_CHANNELS.libraryScanState, listener);
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.libraryScanState, listener);
+    };
+  },
+  onIntegrationAutoConnectState: (
+    cb: (payload: { service: 'spotify'; status: 'connected' | 'failed'; message?: string }) => void
+  ) => {
+    const listener = (
+      _e: unknown,
+      payload: { service: 'spotify'; status: 'connected' | 'failed'; message?: string }
+    ): void => {
+      cb(payload);
+    };
+    ipcRenderer.on(IPC_CHANNELS.integrationAutoConnectState, listener);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.integrationAutoConnectState, listener);
+    };
+  },
+  onGlobalShortcutTriggered: (
+    cb: (payload: { command: string }) => void
+  ) => {
+    const listener = (_e: unknown, payload: { command: string }): void => {
+      cb(payload);
+    };
+    ipcRenderer.on(IPC_CHANNELS.globalShortcutTriggered, listener);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.globalShortcutTriggered, listener);
     };
   },
 });

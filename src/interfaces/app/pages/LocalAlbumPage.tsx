@@ -71,19 +71,34 @@ export function LocalAlbumPage(): React.ReactElement {
               </div>
               <span className="badge badge-local">Local</span>
             </div>
-            <button
-              type="button"
-              className="primary"
-              onClick={() => {
-                void pb.playRef({
-                  source: 'local',
-                  localTrackId: t.localTrackId,
-                  filePath: t.filePath,
-                });
-              }}
-            >
-              Play
-            </button>
+            <div style={{ display: 'flex', gap: '0.35rem' }}>
+              <button
+                type="button"
+                className="primary"
+                onClick={() => {
+                  void pb.playRef({
+                    source: 'local',
+                    localTrackId: t.localTrackId,
+                    filePath: t.filePath,
+                  });
+                }}
+              >
+                Play
+              </button>
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => {
+                  void pb.enqueueRef({
+                    source: 'local',
+                    localTrackId: t.localTrackId,
+                    filePath: t.filePath,
+                  });
+                }}
+              >
+                Add to Q
+              </button>
+            </div>
           </div>
         ))}
       </div>

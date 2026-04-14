@@ -1,6 +1,6 @@
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { app, BrowserWindow, Menu } from 'electron';
+import { app, BrowserWindow, globalShortcut, Menu } from 'electron';
 import { loadEnv } from '../../shared/load-env.js';
 import { logError, logInfo } from '../../shared/app-logger.js';
 import { ConfigurationError } from '../../shared/errors.js';
@@ -64,6 +64,7 @@ function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1100,
     height: 760,
+    icon: join(__dirname, '../../../assets/icons/deepcut.png'),
     webPreferences: {
       preload: join(__dirname, '../preload/preload.cjs'),
       contextIsolation: true,
@@ -87,6 +88,37 @@ function createWindow(): void {
   });
 }
 
+function registerGlobalShortcuts(): void {
+  const bindings: ReadonlyArray<[string, string]> = [
+    ['MediaPlayPause', 'togglePlay'],
+    ['MediaNextTrack', 'next'],
+    ['MediaPreviousTrack', 'previous'],
+    ['MediaStop', 'togglePlay'],
+    ['MediaTrackNext', 'next'],
+    ['MediaTrackPrevious', 'previous'],
+    ['CommandOrControl+Shift+S', 'openSettings'],
+    ['CommandOrControl+F', 'focusSearch'],
+  ];
+  for (const [accelerator, command] of bindings) {
+    try {
+      globalShortcut.register(accelerator, () => {
+        if (mainWindow === null || mainWindow.isDestroyed()) {
+          return;
+        }
+        mainWindow.webContents.send(IPC_CHANNELS.globalShortcutTriggered, { command });
+      });
+    } catch (error) {
+      logError('Failed to register global shortcut', { accelerator, error: String(error) });
+    }
+  }
+}
+
+function tryMprisIntegration(): void {
+  // Placeholder: MPRIS bridge is optional and environment-dependent.
+  // Keep this hook centralized so native/dbus integration can be wired without touching UI.
+  logInfo('MPRIS integration hook initialized (no-op)');
+}
+
 void app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
   registerIpcHandlers({
@@ -96,6 +128,8 @@ void app.whenReady().then(() => {
     broadcastLibraryScanState,
   });
   createWindow();
+  registerGlobalShortcuts();
+  tryMprisIntegration();
   logInfo('DeepCut main started');
 
   app.on('activate', () => {
@@ -106,6 +140,7 @@ void app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  globalShortcut.unregisterAll();
   if (process.platform !== 'darwin') {
     app.quit();
   }

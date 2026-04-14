@@ -135,24 +135,10 @@ export async function spotifySearch(
   const u = new URL('https://api.spotify.com/v1/search');
   u.searchParams.set('q', query);
   u.searchParams.set('type', spotifyType);
-  u.searchParams.set('limit', '20');
   const res = await fetch(u, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!res.ok) {
-    const errorText = await res.text();
-    if (res.status === 400 && /invalid limit/i.test(errorText)) {
-      const retryUrl = new URL('https://api.spotify.com/v1/search');
-      retryUrl.searchParams.set('q', query);
-      retryUrl.searchParams.set('type', spotifyType);
-      const retryRes = await fetch(retryUrl, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      if (retryRes.ok) {
-        const retryData = (await retryRes.json()) as Parameters<typeof mapSpotifySearchJson>[0];
-        return mapSpotifySearchJson(retryData);
-      }
-    }
     throw new ExternalServiceError(`Spotify search failed: ${res.status}`);
   }
   const data = (await res.json()) as Parameters<typeof mapSpotifySearchJson>[0];
@@ -271,30 +257,67 @@ export async function getArtistTopTracks(
 export async function getArtistAlbums(accessToken: string, artistId: string): Promise<
   { albums: { id: string; name: string; releaseYear?: number }[]; hasMore: boolean }
 > {
-  const url = `https://api.spotify.com/v1/artists/${artistId}/albums?include_groups=album&market=US&limit=50`;
+  const url = `https://api.spotify.com/v1/artists/${artistId}/albums?include_groups=album&market=US`;
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!res.ok) {
-    const errorText = await res.text();
-    if (res.status === 400 && /invalid limit/i.test(errorText)) {
-      const retryUrl = `https://api.spotify.com/v1/artists/${artistId}/albums?include_groups=album&market=US`;
-      const retryRes = await fetch(retryUrl, {
+    await res.text();
+    if (res.status === 429) {
+      const artistRes = await fetch(`https://api.spotify.com/v1/artists/${encodeURIComponent(artistId)}`, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
-      if (retryRes.ok) {
-        const retryData = (await retryRes.json()) as {
-          items: { id: string; name: string; release_date?: string }[];
-          next?: string | null;
-        };
-        const mappedRetry = retryData.items.map((a) => ({
-          id: a.id,
-          name: a.name,
-          releaseYear: a.release_date ? Number.parseInt(a.release_date.slice(0, 4), 10) : undefined,
-        }));
-        return { albums: mappedRetry, hasMore: Boolean(retryData.next) };
+      if (artistRes.ok) {
+        const artistJson = (await artistRes.json()) as { name?: string };
+        const artistName = artistJson.name?.trim() ?? '';
+        if (artistName !== '') {
+          const searchUrl = new URL('https://api.spotify.com/v1/search');
+          searchUrl.searchParams.set('q', `artist:"${artistName}"`);
+          searchUrl.searchParams.set('type', 'album');
+          searchUrl.searchParams.set('market', 'US');
+          const searchRes = await fetch(searchUrl, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          });
+          if (searchRes.ok) {
+            const searchJson = (await searchRes.json()) as {
+              albums?: {
+                items?: {
+                  id: string;
+                  name: string;
+                  release_date?: string;
+                  artists?: { id?: string; name?: string }[];
+                }[];
+                next?: string | null;
+              };
+            };
+            const allItems = searchJson.albums?.items ?? [];
+            const strictMatch = allItems.filter((album) =>
+              (album.artists ?? []).some((artist) => artist.id === artistId)
+            );
+            const nameMatch = allItems.filter((album) =>
+              (album.artists ?? []).some((artist) =>
+                (artist.name ?? '').localeCompare(artistName, undefined, { sensitivity: 'base' }) === 0
+              )
+            );
+            const source = strictMatch.length > 0 ? strictMatch : nameMatch;
+            const unique = new Map<string, { id: string; name: string; releaseYear?: number }>();
+            for (const album of source) {
+              if (!unique.has(album.id)) {
+                unique.set(album.id, {
+                  id: album.id,
+                  name: album.name,
+                  releaseYear: album.release_date
+                    ? Number.parseInt(album.release_date.slice(0, 4), 10)
+                    : undefined,
+                });
+              }
+            }
+            const mapped = [...unique.values()];
+            return { albums: mapped, hasMore: Boolean(searchJson.albums?.next) };
+          }
+          await searchRes.text();
+        }
       }
-      await retryRes.text();
     }
     throw new ExternalServiceError(`Spotify artist albums failed: ${res.status}`);
   }

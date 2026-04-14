@@ -427,14 +427,13 @@ DeepCut must support global keyboard shortcuts for:
 
 ### 10.7 Queue Model
 
-v1 queueing should remain:
-- simple
-- implicit
+v1 queueing should include:
+- a visible queue dropdown for current queue inspection
+- queue item removal
+- clear queue action
 
 v1 does not require:
-- a visible advanced queue
-- queue reordering UI
-- queue item removal UI
+- advanced drag-drop queue reordering
 
 ### 10.8 Session Restore
 
@@ -712,6 +711,9 @@ The Search screen must provide:
 - grouped results by type
 - source indicators
 - source filters
+- alphabetical mixed-source ordering within each entity view
+- breadcrumb-style navigation continuity for Artist -> Album -> Tracks journeys
+- state continuity when navigating away and back (query, filter, workflow context)
 
 ### 14.4 Artist and Album Pages
 
@@ -730,6 +732,9 @@ Settings must include:
 - MongoDB connection/config status
 - cache management
 - basic app preferences
+- first-run setup guidance with rationale for required fields
+- field/tooltips and short section intent copy
+- Spotify playback mode selection (Connect default with optional Web Playback)
 
 ### 14.6 Acceptance Criteria
 

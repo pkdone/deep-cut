@@ -91,6 +91,7 @@ type MongoDbStatus = null | { ok: true } | { ok: false; message: string };
 
 function IntegrationStatusStrip(): ReactElement {
   const navigate = useNavigate();
+  const pb = usePlayback();
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [spotifySt, setSpotifySt] = useState<{ connected: boolean; expiresAtMs: number } | null>(
     null
@@ -180,9 +181,13 @@ function IntegrationStatusStrip(): ReactElement {
   const llmWarn = settings !== null ? getLlmIntegrationWarning(settings) : null;
   const localWarn = settings !== null ? getLocalFoldersWarning(settings) : null;
 
-  const spotifyLabel =
+  const spotifyHoverBase =
     spotifyWarn ??
     'Spotify is connected. Open Settings to manage Spotify.';
+  const spotifyLabel =
+    pb.current?.source === 'spotify' && pb.spotifyPlaybackMechanism !== null
+      ? `Playback: ${pb.spotifyPlaybackMechanism}. ${spotifyHoverBase}`
+      : spotifyHoverBase;
 
   let llmTitle: string;
   let llmBtnClass = 'np-status-btn';
@@ -305,6 +310,32 @@ function IntegrationStatusStrip(): ReactElement {
 export function NowPlayingBar(): ReactElement {
   const pb = usePlayback();
   const cur = pb.current;
+  const [queueOpen, setQueueOpen] = useState(false);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    return window.deepcut.onGlobalShortcutTriggered((payload) => {
+      if (payload.command === 'togglePlay') {
+        void pb.togglePlay();
+        return;
+      }
+      if (payload.command === 'next') {
+        void pb.next();
+        return;
+      }
+      if (payload.command === 'previous') {
+        void pb.previous();
+        return;
+      }
+      if (payload.command === 'openSettings') {
+        void navigate('/settings');
+        return;
+      }
+      if (payload.command === 'focusSearch') {
+        void navigate('/search');
+      }
+    });
+  }, [navigate, pb]);
   let trackTitle = 'Nothing playing';
   if (cur !== null) {
     trackTitle = pb.nowPlayingTrackTitle === null ? '…' : pb.nowPlayingTrackTitle;
@@ -348,6 +379,14 @@ export function NowPlayingBar(): ReactElement {
           </button>
           <button type="button" className="ghost np-transport-btn" aria-label="Next track" onClick={() => void pb.next()}>
             ⏭
+          </button>
+          <button
+            type="button"
+            className="ghost np-transport-btn"
+            aria-label="Toggle queue"
+            onClick={() => { setQueueOpen((v) => !v); }}
+          >
+            ☰
           </button>
         </div>
         <div className="np-sliders">
@@ -394,6 +433,34 @@ export function NowPlayingBar(): ReactElement {
           </div>
         ) : null}
       </div>
+      {queueOpen ? (
+        <div className="np-queue-popover panel" role="dialog" aria-label="Playback queue">
+          <div className="np-queue-header">
+            <strong>Queue</strong>
+            <button type="button" className="ghost" onClick={() => void pb.clearQueue()}>
+              Clear queue
+            </button>
+          </div>
+          {pb.queue.length === 0 ? <p className="subtitle">Queue is empty.</p> : null}
+          {pb.queue.map((entry, index) => (
+            <div key={`${entry.source}-${index}`} className="list-row">
+              <span className="subtitle">
+                {entry.source === 'spotify'
+                  ? `Spotify: ${entry.spotifyId}`
+                  : entry.filePath.split('/').at(-1) ?? entry.localTrackId}
+              </span>
+              <button
+                type="button"
+                className="icon-button"
+                aria-label={`Remove queue item ${index + 1}`}
+                onClick={() => { void pb.removeQueueEntryAt(index); }}
+              >
+                −
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

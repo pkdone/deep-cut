@@ -2,6 +2,10 @@ import { z } from 'zod';
 import { enrichmentArtistKeySchema } from '../domain/schemas/artist-enrichment.js';
 import { appSettingsSchema } from '../domain/schemas/app-settings.js';
 import { playbackSessionSchema } from '../domain/schemas/playback-session.js';
+import {
+  playlistNodeIdSchema,
+  playlistTreeNodeSchema,
+} from '../domain/schemas/playlist.js';
 import { trackRefSchema } from '../domain/schemas/track-ref.js';
 
 export const IPC_CHANNELS = {
@@ -20,8 +24,11 @@ export const IPC_CHANNELS = {
   spotifySearchNext: 'deepcut:spotifySearchNext',
   getPlaylists: 'deepcut:getPlaylists',
   savePlaylist: 'deepcut:savePlaylist',
+  getPlaylistTree: 'deepcut:getPlaylistTree',
+  savePlaylistTree: 'deepcut:savePlaylistTree',
   deletePlaylist: 'deepcut:deletePlaylist',
   addTrackToPlaylist: 'deepcut:addTrackToPlaylist',
+  removeTrackFromPlaylist: 'deepcut:removeTrackFromPlaylist',
   getPlaybackSession: 'deepcut:getPlaybackSession',
   savePlaybackSession: 'deepcut:savePlaybackSession',
   getArtistEnrichment: 'deepcut:getArtistEnrichment',
@@ -40,6 +47,9 @@ export const IPC_CHANNELS = {
   onLibraryUpdated: 'deepcut:onLibraryUpdated',
   /** Main → renderer: payload `{ scanning: boolean }`. */
   libraryScanState: 'deepcut:libraryScanState',
+  /** Main → renderer: payload for best-effort startup auto-connect notifications. */
+  integrationAutoConnectState: 'deepcut:integrationAutoConnectState',
+  globalShortcutTriggered: 'deepcut:globalShortcutTriggered',
   /** Open https URL in the system default browser (main process). */
   openExternalUrl: 'deepcut:openExternalUrl',
 } as const;
@@ -100,4 +110,18 @@ export const savePlaylistPayload = z.object({
 export const addTrackToPlaylistPayload = z.object({
   playlistId: z.string().uuid(),
   track: trackRefSchema,
+});
+
+export const removeTrackFromPlaylistPayload = z.object({
+  playlistId: z.string().uuid(),
+  entryId: z.string().uuid(),
+});
+
+export const savePlaylistTreePayload = z.object({
+  nodes: z.array(playlistTreeNodeSchema),
+});
+
+export const renamePlaylistTreeNodePayload = z.object({
+  nodeId: playlistNodeIdSchema,
+  name: z.string().min(1),
 });

@@ -40,6 +40,8 @@ If Electron still complains about the sandbox, confirm the path exists and repea
 | Script                | Purpose                                          |
 | --------------------- | ------------------------------------------------ |
 | `npm run dev`         | Electron + Vite dev                              |
+| `npm run test:e2e`    | Playwright E2E smoke suite                       |
+| `npm run test:e2e:headed` | Playwright E2E in headed mode                |
 | `npm run build:app`   | Production build to `out/`                       |
 | `npm run build`       | Build + Linux `.deb` (requires packaging step)   |
 | `npm run validate`    | `lint` + `test` + `build:app`                    |
@@ -50,3 +52,13 @@ If Electron still complains about the sandbox, confirm the path exists and repea
 ## Product rules
 
 See `docs/PRD.md` and `docs/IMPLEMENTATION_PLAN.md`.
+
+## Current feature highlights
+
+- Search preserves workflow context and supports alphabetical mixed local/Spotify ordering.
+- Settings includes Spotify playback mode selection (`Spotify Connect` default, `Web Playback` optional),
+  first-run setup guidance, and field-level help text.
+- Now Playing keeps recent artist tabs and exposes a queue dropdown with remove/clear actions.
+- Playlists include a hierarchical manager in the `Playlists` route for folder/playlist create, rename,
+  delete, and reorder workflows.
+- Electron registers global media shortcuts and a startup MPRIS hook placeholder for Linux integration.

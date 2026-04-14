@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactElement, type ReactNode } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Link } from 'react-router-dom';
 import { v4 as uuidv4 } from 'uuid';
 import type { LocalTrack } from '../../../domain/schemas/local-track.js';
@@ -14,7 +15,6 @@ import {
   getSearchCap,
   getSearchDebounceMs,
   mergeAdditionalSpotifyTracks,
-  splitUnifiedTracksForPagination,
 } from '../../../application/unified-search.js';
 import type { AppSettings } from '../../../domain/schemas/app-settings.js';
 import type { Playlist } from '../../../domain/schemas/playlist.js';
@@ -37,6 +37,13 @@ type ExtraSpotify = {
   readonly tracks: UnifiedSearchRow[];
 };
 
+type SearchSessionSnapshot = {
+  readonly q: string;
+  readonly searchEntity: SectionKey;
+  readonly filter: 'all' | 'spotify' | 'local';
+  readonly sectionPage: Record<SectionKey, number>;
+};
+
 const EMPTY_EXTRA: ExtraSpotify = {
   artists: [],
   albums: [],
@@ -45,6 +52,7 @@ const EMPTY_EXTRA: ExtraSpotify = {
 
 /** Select value when there are no playlists yet — creates "New Playlist #n" on add. */
 const ADD_TO_NEW_PLAYLIST = '__new__';
+const SEARCH_SESSION_KEY = 'deepcut.search.session.v1';
 
 function syncAddToPlaylistSelection(playlists: Playlist[], settings: AppSettings): string {
   if (playlists.length === 0) {
@@ -123,24 +131,111 @@ function SearchSectionListArea(props: {
 
 export function SearchPage(): ReactElement {
   const pb = usePlayback();
-  const [q, setQ] = useState('');
-  const [searchEntity, setSearchEntity] = useState<SectionKey>('artists');
-  const [filter, setFilter] = useState<'all' | 'spotify' | 'local'>('all');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialEntity = searchParams.get('entity');
+  const initialFilter = searchParams.get('filter');
+  const initialQuery = searchParams.get('q');
+  const [q, setQ] = useState(() => {
+    const raw = sessionStorage.getItem(SEARCH_SESSION_KEY);
+    if (raw === null) {
+      return '';
+    }
+    try {
+      const parsed = JSON.parse(raw) as SearchSessionSnapshot;
+      return parsed.q;
+    } catch {
+      return '';
+    }
+  });
+  const [searchEntity, setSearchEntity] = useState<SectionKey>(
+    initialEntity === 'artists' || initialEntity === 'albums' || initialEntity === 'tracks'
+      ? initialEntity
+      : 'artists'
+  );
+  const [filter, setFilter] = useState<'all' | 'spotify' | 'local'>(
+    initialFilter === 'all' || initialFilter === 'spotify' || initialFilter === 'local'
+      ? initialFilter
+      : 'all'
+  );
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [addToPl, setAddToPl] = useState<string>(ADD_TO_NEW_PLAYLIST);
   const [playlistModal, setPlaylistModal] = useState<PlaylistModalState>({ kind: 'closed' });
   const [modalPlaylistName, setModalPlaylistName] = useState('');
   const [result, setResult] = useState<UnifiedSearchResult | null>(null);
   const [sectionPage, setSectionPage] = useState<Record<SectionKey, number>>({
-    artists: 0,
-    albums: 0,
-    tracks: 0,
+    artists: (() => {
+      const raw = sessionStorage.getItem(SEARCH_SESSION_KEY);
+      if (raw === null) {
+        return 0;
+      }
+      try {
+        const parsed = JSON.parse(raw) as SearchSessionSnapshot;
+        return parsed.sectionPage.artists;
+      } catch {
+        return 0;
+      }
+    })(),
+    albums: (() => {
+      const raw = sessionStorage.getItem(SEARCH_SESSION_KEY);
+      if (raw === null) {
+        return 0;
+      }
+      try {
+        const parsed = JSON.parse(raw) as SearchSessionSnapshot;
+        return parsed.sectionPage.albums;
+      } catch {
+        return 0;
+      }
+    })(),
+    tracks: (() => {
+      const raw = sessionStorage.getItem(SEARCH_SESSION_KEY);
+      if (raw === null) {
+        return 0;
+      }
+      try {
+        const parsed = JSON.parse(raw) as SearchSessionSnapshot;
+        return parsed.sectionPage.tracks;
+      } catch {
+        return 0;
+      }
+    })(),
   });
   const [extraSpotify, setExtraSpotify] = useState<ExtraSpotify>(EMPTY_EXTRA);
   const [spotifyPaging, setSpotifyPaging] = useState<UnifiedSearchSpotifyPaging | null>(null);
 
   const debounceMs = useMemo(() => getSearchDebounceMs(), []);
   const pageSize = useMemo(() => getSearchCap(), []);
+
+  useEffect(() => {
+    if (initialQuery !== null) {
+      setQ(initialQuery);
+    }
+    // initial query value should only be applied once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    setSearchParams((params) => {
+      if (q.trim() === '') {
+        params.delete('q');
+      } else {
+        params.set('q', q);
+      }
+      params.set('entity', searchEntity);
+      params.set('filter', filter);
+      return params;
+    }, { replace: true });
+  }, [q, searchEntity, filter, setSearchParams]);
+
+  useEffect(() => {
+    const snapshot: SearchSessionSnapshot = {
+      q,
+      searchEntity,
+      filter,
+      sectionPage,
+    };
+    sessionStorage.setItem(SEARCH_SESSION_KEY, JSON.stringify(snapshot));
+  }, [q, searchEntity, filter, sectionPage]);
 
   const searchPlaceholder = useMemo(() => {
     if (searchEntity === 'artists') {
@@ -204,7 +299,7 @@ export function SearchPage(): ReactElement {
   const runSearch = useCallback(async (query: string, f: typeof filter, entity: SectionKey) => {
     const r = (await window.deepcut.unifiedSearch({
       query,
-      sourceFilter: f,
+      sourceFilter: query.trim() === '' && f === 'all' ? 'local' : f,
       entityType: entity,
     })) as UnifiedSearchResult;
     setResult(r);
@@ -278,9 +373,15 @@ export function SearchPage(): ReactElement {
       return [] as ({ kind: 'spotify'; a: SpotifyArtist } | { kind: 'local'; a: { name: string; trackCount: number } })[];
     }
     const spotify = [...result.artists, ...extraSpotify.artists];
-    const s = spotify.map((a) => ({ kind: 'spotify' as const, a }));
-    const l = result.localArtists.map((a) => ({ kind: 'local' as const, a }));
-    return [...s, ...l];
+    const rows = [
+      ...spotify.map((a) => ({ kind: 'spotify' as const, a })),
+      ...result.localArtists.map((a) => ({ kind: 'local' as const, a })),
+    ];
+    return rows.sort((a, b) => {
+      const left = a.kind === 'spotify' ? a.a.name : a.a.name;
+      const right = b.kind === 'spotify' ? b.a.name : b.a.name;
+      return left.localeCompare(right, undefined, { sensitivity: 'base' });
+    });
   }, [result, extraSpotify.artists]);
 
   const albumRows = useMemo(() => {
@@ -288,17 +389,25 @@ export function SearchPage(): ReactElement {
       return [] as ({ kind: 'spotify'; al: SpotifyAlbum } | { kind: 'local'; al: { artist: string; album: string; trackCount: number } })[];
     }
     const spotify = [...result.albums, ...extraSpotify.albums];
-    const s = spotify.map((al) => ({ kind: 'spotify' as const, al }));
-    const l = result.localAlbums.map((al) => ({ kind: 'local' as const, al }));
-    return [...s, ...l];
+    const rows = [
+      ...spotify.map((al) => ({ kind: 'spotify' as const, al })),
+      ...result.localAlbums.map((al) => ({ kind: 'local' as const, al })),
+    ];
+    return rows.sort((a, b) => {
+      const left = a.kind === 'spotify' ? a.al.name : a.al.album;
+      const right = b.kind === 'spotify' ? b.al.name : b.al.album;
+      return left.localeCompare(right, undefined, { sensitivity: 'base' });
+    });
   }, [result, extraSpotify.albums]);
 
   const trackRows = useMemo(() => {
     if (result === null) {
       return [];
     }
-    const { spotifyLinked, localOnly } = splitUnifiedTracksForPagination(result.tracks);
-    return [...spotifyLinked, ...extraSpotify.tracks, ...localOnly];
+    const rows = [...result.tracks, ...extraSpotify.tracks];
+    return rows.sort((a, b) =>
+      a.primaryTitle.localeCompare(b.primaryTitle, undefined, { sensitivity: 'base' })
+    );
   }, [result, extraSpotify.tracks]);
 
   const bumpPage = useCallback((key: SectionKey, delta: number) => {
@@ -471,6 +580,9 @@ export function SearchPage(): ReactElement {
           <option value="local">Local</option>
         </select>
         <span className="subtitle">{pageSize} per page</span>
+        {q.trim() === '' ? (
+          <span className="subtitle">No criteria entered; showing local entities only.</span>
+        ) : null}
       </div>
 
       <NewPlaylistModal
@@ -644,6 +756,29 @@ export function SearchPage(): ReactElement {
                         }}
                       >
                         Play
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost"
+                        onClick={() => {
+                          if (row.spotify) {
+                            void pb.enqueueRef({
+                              source: 'spotify',
+                              spotifyId: row.spotify.id,
+                              spotifyUri: row.spotify.uri,
+                            });
+                            return;
+                          }
+                          if (row.local) {
+                            void pb.enqueueRef({
+                              source: 'local',
+                              localTrackId: row.local.localTrackId,
+                              filePath: row.local.filePath,
+                            });
+                          }
+                        }}
+                      >
+                        Add to Q
                       </button>
                       <button
                         type="button"

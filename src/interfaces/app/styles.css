@@ -538,6 +538,23 @@ button.ghost {
   justify-self: end;
 }
 
+.np-queue-popover {
+  position: absolute;
+  right: 1rem;
+  bottom: 4.8rem;
+  width: min(420px, calc(100vw - 2rem));
+  max-height: 55vh;
+  overflow-y: auto;
+  z-index: 120;
+}
+
+.np-queue-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
 .np-status-strip {
   display: flex;
   flex-wrap: wrap;
