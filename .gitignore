@@ -10,6 +10,7 @@ release/
 node_modules/
 .next/
 coverage/
+test-results/
 .vscode/settings.json
 *.log
 *.mongodb
