@@ -140,6 +140,19 @@ export async function spotifySearch(
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!res.ok) {
+    const errorText = await res.text();
+    if (res.status === 400 && /invalid limit/i.test(errorText)) {
+      const retryUrl = new URL('https://api.spotify.com/v1/search');
+      retryUrl.searchParams.set('q', query);
+      retryUrl.searchParams.set('type', spotifyType);
+      const retryRes = await fetch(retryUrl, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (retryRes.ok) {
+        const retryData = (await retryRes.json()) as Parameters<typeof mapSpotifySearchJson>[0];
+        return mapSpotifySearchJson(retryData);
+      }
+    }
     throw new ExternalServiceError(`Spotify search failed: ${res.status}`);
   }
   const data = (await res.json()) as Parameters<typeof mapSpotifySearchJson>[0];
@@ -180,44 +193,121 @@ export async function getArtistTopTracks(
   accessToken: string,
   artistId: string
 ): Promise<{ id: string; name: string; uri: string; durationMs: number }[]> {
-  const res = await fetch(
+  const topTrackUrls = [
+    `https://api.spotify.com/v1/artists/${artistId}/top-tracks`,
+    `https://api.spotify.com/v1/artists/${artistId}/top-tracks?market=from_token`,
     `https://api.spotify.com/v1/artists/${artistId}/top-tracks?market=US`,
-    { headers: { Authorization: `Bearer ${accessToken}` } }
-  );
-  if (!res.ok) {
-    throw new ExternalServiceError(`Spotify artist top tracks failed: ${res.status}`);
+  ];
+
+  for (const url of topTrackUrls) {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (res.ok) {
+      const data = (await res.json()) as {
+        tracks: { id: string; name: string; uri: string; duration_ms: number }[];
+      };
+      const mapped = data.tracks.map((t) => ({
+        id: t.id,
+        name: t.name,
+        uri: t.uri,
+        durationMs: t.duration_ms,
+      }));
+      return mapped;
+    }
+    await res.text();
   }
-  const data = (await res.json()) as {
-    tracks: { id: string; name: string; uri: string; duration_ms: number }[];
-  };
-  return data.tracks.map((t) => ({
-    id: t.id,
-    name: t.name,
-    uri: t.uri,
-    durationMs: t.duration_ms,
-  }));
+
+  const artistRes = await fetch(`https://api.spotify.com/v1/artists/${encodeURIComponent(artistId)}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (artistRes.ok) {
+    const artistJson = (await artistRes.json()) as { name?: string };
+    const artistName = artistJson.name?.trim() ?? '';
+    if (artistName !== '') {
+      const searchUrl = new URL('https://api.spotify.com/v1/search');
+      searchUrl.searchParams.set('q', `artist:"${artistName}"`);
+      searchUrl.searchParams.set('type', 'track');
+      const searchRes = await fetch(searchUrl, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (searchRes.ok) {
+        const searchJson = (await searchRes.json()) as {
+          tracks?: {
+            items?: {
+              id: string;
+              name: string;
+              uri: string;
+              duration_ms: number;
+              popularity?: number;
+              artists?: { id?: string }[];
+            }[];
+          };
+        };
+        const fromArtist = (searchJson.tracks?.items ?? [])
+          .filter((t) => (t.artists ?? []).some((a) => a.id === artistId))
+          .sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0));
+        const unique = new Map<string, { id: string; name: string; uri: string; durationMs: number }>();
+        for (const t of fromArtist) {
+          if (!unique.has(t.id)) {
+            unique.set(t.id, {
+              id: t.id,
+              name: t.name,
+              uri: t.uri,
+              durationMs: t.duration_ms,
+            });
+          }
+        }
+        const fallbackTracks = [...unique.values()].slice(0, 10);
+        return fallbackTracks;
+      }
+      await searchRes.text();
+    }
+  }
+
+  throw new ExternalServiceError('Spotify artist top tracks failed: unavailable');
 }
 
 export async function getArtistAlbums(accessToken: string, artistId: string): Promise<
-  {
-    id: string;
-    name: string;
-    releaseYear?: number;
-  }[]
+  { albums: { id: string; name: string; releaseYear?: number }[]; hasMore: boolean }
 > {
-  const res = await fetch(
-    `https://api.spotify.com/v1/artists/${artistId}/albums?include_groups=album&market=US&limit=50`,
-    { headers: { Authorization: `Bearer ${accessToken}` } }
-  );
+  const url = `https://api.spotify.com/v1/artists/${artistId}/albums?include_groups=album&market=US&limit=50`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
   if (!res.ok) {
+    const errorText = await res.text();
+    if (res.status === 400 && /invalid limit/i.test(errorText)) {
+      const retryUrl = `https://api.spotify.com/v1/artists/${artistId}/albums?include_groups=album&market=US`;
+      const retryRes = await fetch(retryUrl, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (retryRes.ok) {
+        const retryData = (await retryRes.json()) as {
+          items: { id: string; name: string; release_date?: string }[];
+          next?: string | null;
+        };
+        const mappedRetry = retryData.items.map((a) => ({
+          id: a.id,
+          name: a.name,
+          releaseYear: a.release_date ? Number.parseInt(a.release_date.slice(0, 4), 10) : undefined,
+        }));
+        return { albums: mappedRetry, hasMore: Boolean(retryData.next) };
+      }
+      await retryRes.text();
+    }
     throw new ExternalServiceError(`Spotify artist albums failed: ${res.status}`);
   }
   const data = (await res.json()) as {
     items: { id: string; name: string; release_date?: string }[];
+    next?: string | null;
   };
-  return data.items.map((a) => ({
-    id: a.id,
-    name: a.name,
-    releaseYear: a.release_date ? Number.parseInt(a.release_date.slice(0, 4), 10) : undefined,
-  }));
+  return {
+    albums: data.items.map((a) => ({
+      id: a.id,
+      name: a.name,
+      releaseYear: a.release_date ? Number.parseInt(a.release_date.slice(0, 4), 10) : undefined,
+    })),
+    hasMore: Boolean(data.next),
+  };
 }

@@ -1,12 +1,12 @@
 # DeepCut
 
-Linux desktop music player (Electron): **Spotify** + **local MP3**, **MongoDB Atlas** persistence, **LLM** artist enrichment.
+Linux desktop music library player (Electron): **music streaming services** + **local MP3**, **MongoDB Atlas** persistence, **LLM** artist enrichment.
 
 ## Prerequisites
 
 - Node.js ≥ 22.21.1
 - MongoDB Atlas (or compatible) cluster
-- Spotify [developer app](https://developer.spotify.com/dashboard) (Client ID + secret; redirect URI `http://127.0.0.1:<port>/callback` is handled by a local server during OAuth)
+- Spotify [developer app](https://developer.spotify.com/dashboard) (Client ID + secret; redirect URI `http://127.0.0.1:8888/callback`)
 
 ## Setup
 

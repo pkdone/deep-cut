@@ -73,6 +73,7 @@ export interface DeepcutApi {
   spotifyArtistCatalog: (artistId: string) => Promise<{
     albums: { id: string; name: string; releaseYear?: number }[];
     topTracks: { id: string; name: string; uri: string; durationMs: number }[];
+    hasMoreAlbums: boolean;
   }>;
   spotifyGetArtist: (id: string) => Promise<{ id: string; name: string } | null>;
   spotifyGetAlbum: (id: string) => Promise<{
