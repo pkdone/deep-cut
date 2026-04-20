@@ -3,6 +3,7 @@ import { URL } from 'node:url';
 import { logError, logInfo } from '../../shared/app-logger.js';
 import { ExternalServiceError } from '../../shared/errors.js';
 
+/** Web Playback SDK needs `streaming`; Web API playback control needs modify/read state; playlists as used by the app. */
 const SCOPES = [
   'streaming',
   'user-read-email',

@@ -32,7 +32,7 @@ Dependency rule: **interfaces → application → domain**; **infrastructure** d
 
 ### 1.4 Risk-driven allowances
 
-- **Spotify playback**: PRD allows in-app playback **or** fallback to controlling the Spotify app. The implementation plan assumes **try Web Playback / embedded path first**, then **document fallback** (Connect / D-Bus / `playerctl`—**TBD**) in an ADR once researched on Ubuntu 24.04+.
+- **Spotify playback**: **Web API + Web Playback SDK** together (see [`docs/adr/004-spotify-playback-strategy.md`](adr/004-spotify-playback-strategy.md)). **Default Web API (remote device)** — playback runs on an existing Spotify Connect device (desktop, phone, speaker, or the Spotify Web Player at open.spotify.com). **Optional Web Playback SDK** — in-app audio when Electron's Chromium has a working Widevine CDM. **No** automatic failover between transports; failures route to Settings → Spotify with actionable messaging.
 - **Local library scale (v1):** design and test with **~2,500 albums** as the nominal local catalogue size; **symlinks are not followed** when scanning.
 - **Single process**: no separate daemon unless watch scale or audio constraints force it—justify in an ADR if added.
 
@@ -48,7 +48,7 @@ deep-cut/
 │   ├── PRD.md
 │   ├── IMPLEMENTATION_PLAN.md      # this file
 │   ├── ENGINEERING_RULES.md        # optional; PRD suggests—may mirror .cursor/rules
-│   └── adr/                        # Architecture Decision Records (optional folder)
+│   └── adr/                        # Architecture Decision Records (see adr/README.md)
 ├── scripts/
 │   ├── db-init.ts
 │   └── db-teardown.ts
@@ -102,7 +102,7 @@ Aligned with **`docs/PRD.md`** §3, §14, §22. Summary:
 | **Data** | **MongoDB Atlas** (or compatible) via **`MONGODB_URI`**; playlists app-owned (not native Spotify playlists); **network required** for app persistence (local playback still works offline with already-indexed files per PRD) |
 | **Core UX** | Home, Search, Artist, Album, Playlist, Now Playing, Settings |
 | **Search** | Unified, **grouped by type**, source badges, source filter, **merged duplicates** (fuzzy), default play source Spotify when available; **debounce + per-section caps** (tune in implementation) |
-| **Playback** | In-app preferred; cross-source handoff acceptable; failure → local fuzzy fallback → error → skip |
+| **Playback** | Spotify: **Web API (remote device)** default, **Web Playback SDK** optional (ADR-004); cross-source handoff acceptable; track failure → local fuzzy fallback → error → skip |
 | **Playlists** | CRUD, reorder, mixed sources, persist |
 | **Artist intelligence** | **Grounded pipeline**: provider **web retrieval** (OpenAI Responses + `web_search`, Anthropic **web search** tool) → normalize evidence → **synthesis** to strict JSON → **Zod** validation → **MongoDB** cache; **Spotify API not used** for Now Playing insight lists; **local + Spotify** share the same pipeline; synopsis **6–8** sentences; **ranked albums**; **10 top tracks**; up to **3** live / **3** best-of / **3** rarities with **years**; **band members**; **30-day cache** by **normalized artist key**, **Now Playing** UI, manual refresh, **synthesis retry once** on invalid output, partial render + warnings when applicable |
 | **Offline** | Local library + local playback + **cached** enrichment |
@@ -122,7 +122,7 @@ Suggested order (from PRD §25, refined):
 2. **MongoDB + settings**: `MONGODB_URI`, `db:init`, connection health in Settings, **ConfigurationError** path, persist minimal settings.
 3. **Local library**: folder pick, MP3 scan (**do not follow symlinks**), tags/artwork, watch + reindex (simple remove/reimport), domain + repos + UI browse path; design for **~2,500 albums** local scale assumption.
 4. **Local playback**: Now Playing minimal controls, session fields in DB, **restore on restart** (track, position, context).
-5. **Spotify**: **browser OAuth on each cold start** with startup auto-connect attempt when credentials exist, search API, metadata; implement mode toggle (`Spotify Connect` default, optional `Web Playback SDK`) with shared fallback behaviour.
+5. **Spotify**: **browser OAuth on each cold start** with startup auto-connect attempt when credentials exist, search API, metadata; mode toggle **Web API (remote device)** (default) vs **Web Playback SDK** (optional) per [`docs/adr/004-spotify-playback-strategy.md`](adr/004-spotify-playback-strategy.md) — no automatic cross-mode fallback. Remote-device mode may prompt the user to open the Spotify Web Player ([open.spotify.com](https://open.spotify.com/)) when no Connect device is active.
 6. **Unified search + merge**: grouped results, filters, fuzzy duplicate merge, Spotify-preferred play on merged rows; **Spotify-primary title** with optional **subtitle** for differing local metadata.
 7. **Playlists**: app playlists in MongoDB plus hierarchical folder tree, mixed playback, reorder/remove, inline CRUD actions.
 8. **Artist enrichment**: Grounded **retrieval + synthesis** adapters (OpenAI Responses + web search, Anthropic Messages + web search); domain split (`ArtistEvidenceBundle`, **`ArtistInsightsRecord`** persisted aggregate with validation status + warnings); JSON validation, cache + refresh on **Now Playing**, offline cached read. **Persistence:** Zod-validated documents in Mongo; **`db:init`** ensures the collection + **unique index** on `enrichmentArtistKey` (no server-side JSON Schema on the payload body yet). **Breaking payload / `docSchemaVersion` changes:** no migration script in-repo; reset dev DB with **`db:teardown`** then **`db:init`**, or drop incompatible cache documents, before relying on the new shape. **Optional live integration tests:** `npm run test:integration` (loads `.env.local` via Jest setup); set **`OPENAI_API_KEY`** / **`ANTHROPIC_API_KEY`** there; **`npm test`** stays keyless and excludes `*.int.test.ts`.
@@ -169,7 +169,7 @@ Illustrative—not exhaustive. Names will evolve with ubiquitous language.
 
 - **Electron version** and **security** defaults (`contextIsolation`, `sandbox`, CSP).
 - **Local audio**: Node decoder vs Chromium vs native module for gapless/seek—impact on Now Playing.
-- **Spotify playback**: Web Playback SDK vs alternative; **Linux** audio routing.
+- **Spotify playback**: Linux DRM / device availability for Web Playback SDK vs remote device mode (see ADR-004).
 - **Global shortcuts / MPRIS**: `globalShortcut` vs desktop conventions (`org.mpris.MediaPlayer2`).
 - **E2E** against real Spotify vs **recorded mocks** for CI.
 
@@ -198,7 +198,7 @@ Draft these **early** to reduce rework; store as `docs/adr/NNN-title.md` (or `do
 | **ADR-001 Electron process and IPC** | Where main/preload/renderer live; IPC naming; zod at boundary | Touches every feature |
 | **ADR-002 MongoDB topology for DeepCut** | **Atlas**; offline behaviour for local playback vs online persistence; single `MONGODB_URI` | Blocks settings and persistence |
 | **ADR-003 Spotify auth (v1)** | Browser OAuth each cold start; in-memory session tokens; no cross-restart persistence | Blocks Spotify features |
-| **ADR-004 Spotify playback strategy** | Web Playback vs Connect vs hybrid; Linux constraints | Highest delivery risk per PRD |
+| **ADR-004 Spotify playback strategy** | [`docs/adr/004-spotify-playback-strategy.md`](adr/004-spotify-playback-strategy.md) — Web API + Web Playback SDK; default remote device, optional in-app SDK; no transport failover | Highest delivery risk per PRD |
 | **ADR-005 Local audio stack** | How MP3 is decoded and wired to UI/seek | Drives Now Playing and tests |
 | **ADR-006 LLM integration** | Provider abstraction; strict JSON; errors/retries; models | Artist enrichment core path |
 

@@ -1,13 +1,19 @@
 import { dirname, join } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, globalShortcut, Menu } from 'electron';
 import { loadEnv } from '../../shared/load-env.js';
 import { logError, logInfo } from '../../shared/app-logger.js';
 import { ConfigurationError } from '../../shared/errors.js';
 import { IPC_CHANNELS } from '../ipc-contract.js';
+import {
+  productionRendererEntryUrl,
+  registerAppProtocolHandler,
+  registerPrivilegedAppScheme,
+} from './app-protocol.js';
 import { registerIpcHandlers } from './register-ipc-handlers.js';
 
 loadEnv();
+registerPrivilegedAppScheme();
 
 const getMongoUri = (): string => {
   const uri = process.env.MONGODB_URI?.trim();
@@ -36,6 +42,9 @@ function isNavigationAllowed(current: string, next: string): boolean {
     ) {
       return nextUrl.origin === curUrl.origin;
     }
+    if (nextUrl.protocol === 'app:' && curUrl.protocol === 'app:') {
+      return nextUrl.origin === curUrl.origin;
+    }
     if (nextUrl.protocol === 'file:' && curUrl.protocol === 'file:') {
       const curFile = fileURLToPath(curUrl.href);
       const nextFile = fileURLToPath(nextUrl.href);
@@ -60,7 +69,21 @@ function broadcastLibraryScanState(scanning: boolean): void {
   }
 }
 
+function rendererSandboxEnabled(): boolean {
+  const raw = process.env.DEEPCUT_ELECTRON_RENDERER_SANDBOX?.trim().toLowerCase() ?? '';
+  if (raw === '0' || raw === 'false') {
+    return false;
+  }
+  return true;
+}
+
 function createWindow(): void {
+  const sandbox = rendererSandboxEnabled();
+  if (!sandbox) {
+    logInfo('Electron renderer sandbox disabled (DEEPCUT_ELECTRON_RENDERER_SANDBOX)', {
+      note: 'DRM/Web Playback diagnostics only; re-enable sandbox for normal use.',
+    });
+  }
   mainWindow = new BrowserWindow({
     width: 1100,
     height: 760,
@@ -69,7 +92,7 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true,
+      sandbox,
       // Allow file:// URLs for local MP3 playback (v1; tighten with custom protocol later).
       webSecurity: false,
     },
@@ -78,9 +101,7 @@ function createWindow(): void {
   if (process.env.ELECTRON_RENDERER_URL) {
     void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
-    void mainWindow.loadURL(
-      pathToFileURL(join(__dirname, '../renderer/index.html')).href
-    );
+    void mainWindow.loadURL(productionRendererEntryUrl());
   }
 
   mainWindow.on('closed', () => {
@@ -120,6 +141,8 @@ function tryMprisIntegration(): void {
 }
 
 void app.whenReady().then(() => {
+  const rendererRoot = join(__dirname, '../renderer');
+  registerAppProtocolHandler(rendererRoot);
   Menu.setApplicationMenu(null);
   registerIpcHandlers({
     getMongoUri,

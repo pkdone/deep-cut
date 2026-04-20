@@ -181,9 +181,17 @@ function IntegrationStatusStrip(): ReactElement {
   const llmWarn = settings !== null ? getLlmIntegrationWarning(settings) : null;
   const localWarn = settings !== null ? getLocalFoldersWarning(settings) : null;
 
-  const spotifyHoverBase =
-    spotifyWarn ??
-    'Spotify is connected. Open Settings to manage Spotify.';
+  let spotifyHoverBase: string;
+  if (settings === null) {
+    spotifyHoverBase = 'Open Settings for Spotify.';
+  } else if (spotifyWarn !== null) {
+    spotifyHoverBase = spotifyWarn;
+  } else if (spotifyPayload.connected) {
+    spotifyHoverBase = 'Spotify session is active. Open Settings to manage Spotify.';
+  } else {
+    spotifyHoverBase =
+      'Spotify credentials are saved. Use Connect Spotify in Settings to sign in for playback and search.';
+  }
   const spotifyLabel =
     pb.current?.source === 'spotify' && pb.spotifyPlaybackMechanism !== null
       ? `Playback: ${pb.spotifyPlaybackMechanism}. ${spotifyHoverBase}`

@@ -224,6 +224,6 @@ The following are **intentionally incomplete** until the scaffold exists or deci
 - **`docs/ENGINEERING_RULES.md`**—optional companion called out by the PRD; may duplicate this file unless we split “always-on Cursor rules” vs “contributor handbook.”
 - **IPC channel naming and preload API surface**—define with types and zod when code lands.
 - **Audio playback stack for local MP3** (e.g. Web Audio vs native module)—decision in plan/ADR.
-- **Spotify Web Playback SDK vs remote control fallback**—product allows fallback; record the chosen approach when known.
+- **Spotify playback**—**Web API + Web Playback SDK** together; default **Web API (remote device)**, optional **Web Playback SDK**; **no** automatic transport failover; see **`docs/adr/004-spotify-playback-strategy.md`** and PRD §7.4.
 
 When any of the above is decided, **update `docs/IMPLEMENTATION_PLAN.md` or add an ADR** so agents and humans stay aligned.

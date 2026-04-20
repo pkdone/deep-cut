@@ -2,7 +2,8 @@ import { z } from 'zod';
 import { playlistIdSchema } from './ids.js';
 
 export const llmProviderSchema = z.enum(['openai', 'anthropic', 'none']);
-export const spotifyPlaybackModeSchema = z.enum(['connect', 'web-sdk']);
+/** In-app Web Playback SDK device + Web API control, vs Web API playback on an existing Connect device. */
+export const spotifyPlaybackModeSchema = z.enum(['web-playback-sdk', 'web-api-remote']);
 
 export const appSettingsSchema = z.object({
   localMusicFolders: z.array(z.string().min(1)),
@@ -12,7 +13,7 @@ export const appSettingsSchema = z.object({
   spotifyClientId: z.string().optional(),
   spotifyClientSecret: z.string().optional(),
   /** Playback strategy for Spotify tracks. */
-  spotifyPlaybackMode: spotifyPlaybackModeSchema.optional(),
+  spotifyPlaybackMode: spotifyPlaybackModeSchema.default('web-api-remote'),
   /**
    * When false, Now Playing only reads cached insights and does not auto-refresh on cache miss.
    * Manual refresh remains available.

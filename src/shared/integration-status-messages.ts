@@ -22,8 +22,9 @@ export function getSpotifyIntegrationWarning(
   if (spotify.connected) {
     return null;
   }
+  /** Credentials are present: “no session yet” is normal until Connect Spotify — not a status-strip warning. */
   if (spotify.expiresAtMs === 0) {
-    return 'Spotify is not connected. Use Connect Spotify in Settings.';
+    return null;
   }
   const now = Date.now();
   if (now >= spotify.expiresAtMs - TOKEN_SKEW_MS) {
