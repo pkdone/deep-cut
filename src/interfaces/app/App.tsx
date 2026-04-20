@@ -11,6 +11,7 @@ import { SettingsPage } from './pages/SettingsPage.js';
 import { LocalAlbumPage } from './pages/LocalAlbumPage.js';
 import { LocalArtistPage } from './pages/LocalArtistPage.js';
 import { PlaylistsPage } from './pages/PlaylistsPage.js';
+import { SpotifyRemoteDevicePrompt } from './playback/SpotifyRemoteDevicePrompt.js';
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 
@@ -39,6 +40,7 @@ export function App(): React.ReactElement {
   return (
     <Layout>
       <FirstRunGuard />
+      <SpotifyRemoteDevicePrompt />
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/search" element={<SearchPage />} />

@@ -68,7 +68,7 @@ function defaultSettings(): AppSettings {
   return {
     localMusicFolders: [],
     llmProvider: 'none',
-    spotifyPlaybackMode: 'connect',
+    spotifyPlaybackMode: 'web-api-remote',
     nowPlayingAutoRefreshOnMiss: false,
     firstRunWizardCompleted: false,
   };

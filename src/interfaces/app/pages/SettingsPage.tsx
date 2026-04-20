@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { AppSettings } from '../../../domain/schemas/app-settings.js';
+import { SPOTIFY_PLAYBACK_SETTINGS_ERROR_STORAGE_KEY } from '../../../shared/spotify-playback-settings-error.js';
 import { INTEGRATION_STATUS_REFRESH_EVENT } from '../integration-status-events.js';
 import { LLM_PING_UPDATED_EVENT } from '../llm-ping-events.js';
 
@@ -30,6 +31,7 @@ export function SettingsPage(): React.ReactElement {
   const [spotifyAuthBusy, setSpotifyAuthBusy] = useState(false);
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
   const [llmPingError, setLlmPingError] = useState<string | null>(null);
+  const [spotifyPlaybackErrorBanner, setSpotifyPlaybackErrorBanner] = useState<string | null>(null);
   const saveNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refreshSpotifyStatus = useCallback(async (): Promise<void> => {
@@ -94,6 +96,25 @@ export function SettingsPage(): React.ReactElement {
     });
     void refreshSpotifyStatus();
   }, [refreshSpotifyStatus]);
+
+  useEffect(() => {
+    if (s === null) {
+      return undefined;
+    }
+    if (searchParams.get('tab') !== 'spotify') {
+      return undefined;
+    }
+    try {
+      const raw = sessionStorage.getItem(SPOTIFY_PLAYBACK_SETTINGS_ERROR_STORAGE_KEY);
+      if (raw !== null && raw !== '') {
+        sessionStorage.removeItem(SPOTIFY_PLAYBACK_SETTINGS_ERROR_STORAGE_KEY);
+        setSpotifyPlaybackErrorBanner(raw);
+      }
+    } catch {
+      /* ignore */
+    }
+    return undefined;
+  }, [searchParams, s]);
 
   useEffect(() => {
     if (s === null) {
@@ -241,9 +262,23 @@ export function SettingsPage(): React.ReactElement {
       </div>
       <div id="settings-panel-spotify" className="panel">
         <h2 id="settings-heading-spotify" tabIndex={-1}>
-          Spotify API
+          Spotify
         </h2>
-        <p className="subtitle">Configure Spotify auth and choose playback transport mode.</p>
+        <p className="subtitle">Configure Spotify auth and choose how playback is delivered.</p>
+        {spotifyPlaybackErrorBanner !== null ? (
+          <div className="panel" role="alert">
+            <p className="error-text">{spotifyPlaybackErrorBanner}</p>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => {
+                setSpotifyPlaybackErrorBanner(null);
+              }}
+            >
+              Dismiss
+            </button>
+          </div>
+        ) : null}
         <div className="settings-field">
           <label htmlFor="spotify-client-id">Client ID</label>
           <input
@@ -266,34 +301,42 @@ export function SettingsPage(): React.ReactElement {
           />
         </div>
         <fieldset className="search-entity-fieldset">
-          <legend>Spotify playback mode</legend>
-          <label className="search-entity-label" title="Existing Spotify Connect transport (default).">
+          <legend>Spotify playback</legend>
+          <label
+            className="search-entity-label"
+            title="Uses the Web API only: plays on an existing Spotify Connect device (desktop, phone, speaker, or the Spotify Web Player in your browser)."
+          >
             <input
               type="radio"
               name="spotifyPlaybackMode"
-              checked={(s.spotifyPlaybackMode ?? 'connect') === 'connect'}
+              checked={s.spotifyPlaybackMode === 'web-api-remote'}
               onChange={() => {
-                void persistSettings({ ...s, spotifyPlaybackMode: 'connect' });
+                void persistSettings({ ...s, spotifyPlaybackMode: 'web-api-remote' });
               }}
             />
-            Spotify Connect (default)
+            Web API (remote device) (default)
           </label>
-          <label className="search-entity-label" title="Uses integrated Web Playback transport path.">
+          <label
+            className="search-entity-label"
+            title="Creates an in-app Spotify player (Web Playback SDK) and uses the Web API to play on that device. Requires Widevine DRM inside Electron (often unavailable on Linux)."
+          >
             <input
               type="radio"
               name="spotifyPlaybackMode"
-              checked={(s.spotifyPlaybackMode ?? 'connect') === 'web-sdk'}
+              checked={s.spotifyPlaybackMode === 'web-playback-sdk'}
               onChange={() => {
-                void persistSettings({ ...s, spotifyPlaybackMode: 'web-sdk' });
+                void persistSettings({ ...s, spotifyPlaybackMode: 'web-playback-sdk' });
               }}
             />
-            Web Playback
+            Web Playback SDK (optional)
           </label>
         </fieldset>
         <p className="subtitle">
-          For sound on this computer when Web Playback cannot start (for example on Linux without
-          Widevine DRM), leave the Spotify desktop app running. DeepCut will prefer it over your phone
-          or the Chrome &quot;Web Player&quot; tab.
+          DeepCut always uses the Spotify Web API for search and metadata. Web API (remote device)
+          sends playback to another Spotify app (desktop, phone, speaker, or the Spotify Web Player
+          in your browser); Web Playback SDK plays audio inside DeepCut when the environment supports
+          it. If the selected mode fails, change mode or fix the issue here—DeepCut does not switch
+          modes automatically.
         </p>
         <label className="search-entity-label" title="If enabled, startup attempts Spotify login when credentials exist.">
           <input type="checkbox" checked={true} readOnly />

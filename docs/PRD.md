@@ -205,13 +205,12 @@ For v1, the user completes **Spotify OAuth in the browser on each cold start** o
 
 ### 7.4 Playback Preference
 
-DeepCut v1 should:
-- prefer fully integrated in-app Spotify playback
+DeepCut v1 uses **both** the **Spotify Web API** (search, metadata, playlists as implemented, playback state, `me/player` control) and the **Spotify Web Playback SDK** (optional in-app audio via a browser-local Connect device). The user chooses a **playback delivery** mode in Settings:
 
-If embedded/in-app playback proves too unreliable or too constrained:
-- fallback to controlling playback through the Spotify app is acceptable as an implementation fallback
+- **Web API (remote device)** (**default**): audio plays on an **existing** Spotify Connect device (desktop, phone, speaker, or the Spotify Web Player at open.spotify.com) via Web API only. When no Connect device is active, DeepCut may prompt the user to open the Spotify Web Player so their browser tab becomes the device.
+- **Web Playback SDK** (optional): audio plays inside DeepCut when the SDK and Premium requirements are met, including a working Widevine CDM in the Electron runtime (often unavailable on Linux; see ADR-004).
 
-This fallback is not the preferred product outcome, but it is acceptable if necessary.
+The app **does not** automatically switch between these modes when one fails; the user adjusts Settings → Spotify and retries. Controlling another Spotify app is the normal **remote device** behaviour, not a silent fallback from in-app playback.
 
 ### 7.5 Acceptance Criteria
 
@@ -223,8 +222,8 @@ This fallback is not the preferred product outcome, but it is acceptable if nece
   - albums
   - tracks
 - The app can retrieve Spotify metadata needed for playback and display.
-- The app attempts integrated in-app Spotify playback.
-- If integrated playback is not viable in a given implementation path, fallback to Spotify app control is acceptable, but only as a fallback.
+- The app supports integrated in-app Spotify playback (Web Playback SDK) and optional remote-device playback (Web API), per user selection in Settings.
+- If playback fails for the **selected** mode, the app surfaces a **clear, actionable** error and directs the user to **Settings → Spotify** (no automatic cross-mode failover).
 - If a Spotify track fails to play, the app:
   - attempts local fallback using fuzzy matching if a local candidate exists
   - otherwise shows an error
@@ -734,7 +733,7 @@ Settings must include:
 - basic app preferences
 - first-run setup guidance with rationale for required fields
 - field/tooltips and short section intent copy
-- Spotify playback mode selection (Connect default with optional Web Playback)
+- Spotify playback mode selection (**Web API (remote device)** default, **Web Playback SDK** optional; see §7.4)
 
 ### 14.6 Acceptance Criteria
 
