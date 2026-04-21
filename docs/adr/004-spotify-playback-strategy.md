@@ -37,6 +37,10 @@ Linux and Electron introduce delivery risk (Widevine, device availability, Premi
 - **Negative / trade-offs**: Default mode requires another Spotify client (desktop, phone, speaker, or open.spotify.com tab) to be present. Users who explicitly pick **Web Playback SDK** on Linux may hit Widevine-in-Electron limits and must switch modes manually — no automatic escape hatch.
 - **Non-goals**: Automatic cross-mode failover; opening an external Spotify URL as a hidden recovery path when Web Playback SDK mode is selected; any attempt to automate sign-in on open.spotify.com or iframe the Spotify UI.
 
+## Related: volume and mute (all sources)
+
+Remote-device volume limits, mute honesty, global shortcuts, and pausing the other source when switching between Spotify and local playback are documented in **[ADR-005 — Playback volume, mute, and cross-source handoff](./005-playback-volume-mute-and-cross-source-handoff.md)**.
+
 ## Linux / stock Electron (Widevine)
 
 DeepCut ships **stock `electron` from npm** (not a Widevine-patched vendor build). Runtime evidence on at least one Linux host running stock `electron@41.2.0`: `navigator.requestMediaKeySystemAccess('com.widevine.alpha', …)` rejects with `NotSupportedError` ("Unsupported keySystem or supportedConfigurations."), so Spotify's Web Playback SDK emits `initialization_error: Failed to initialize player`. That is **why Web API (remote device) is the default**: the user's **browser** (Chrome, Firefox) typically has a working Widevine CDM out of the box, and **open.spotify.com** is a legitimate Spotify Connect device. App-level levers available for the optional Web Playback SDK path:

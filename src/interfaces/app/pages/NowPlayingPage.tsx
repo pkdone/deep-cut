@@ -103,7 +103,7 @@ function InsightReferenceLink(props: {
 
 export function NowPlayingPage(): ReactElement {
   const pb = usePlayback();
-  const playbackBannerMessage = pb.error ?? pb.playbackHint;
+  const playbackBannerMessage = pb.error ?? pb.playbackNotice ?? pb.playbackHint;
   const cur = pb.current;
   const prevTrackIdentityRef = useRef<string | null>(null);
   const insightFetchRunIdRef = useRef(0);

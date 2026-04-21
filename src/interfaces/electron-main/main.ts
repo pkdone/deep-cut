@@ -115,8 +115,9 @@ function registerGlobalShortcuts(): void {
     ['MediaNextTrack', 'next'],
     ['MediaPreviousTrack', 'previous'],
     ['MediaStop', 'togglePlay'],
-    ['MediaTrackNext', 'next'],
-    ['MediaTrackPrevious', 'previous'],
+    ['VolumeUp', 'volumeUp'],
+    ['VolumeDown', 'volumeDown'],
+    ['VolumeMute', 'toggleMute'],
     ['CommandOrControl+Shift+S', 'openSettings'],
     ['CommandOrControl+F', 'focusSearch'],
   ];

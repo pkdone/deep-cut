@@ -317,22 +317,29 @@ function IntegrationStatusStrip(): ReactElement {
 
 export function NowPlayingBar(): ReactElement {
   const pb = usePlayback();
+  const pbRef = useRef(pb);
+  pbRef.current = pb;
+  const navigate = useNavigate();
+  const navigateRef = useRef(navigate);
+  navigateRef.current = navigate;
+  const lastMuteShortcutMsRef = useRef(0);
   const cur = pb.current;
   const [queueOpen, setQueueOpen] = useState(false);
-  const navigate = useNavigate();
 
   useEffect(() => {
     return window.deepcut.onGlobalShortcutTriggered((payload) => {
+      const p = pbRef.current;
+      const navigate = navigateRef.current;
       if (payload.command === 'togglePlay') {
-        void pb.togglePlay();
+        void p.togglePlay();
         return;
       }
       if (payload.command === 'next') {
-        void pb.next();
+        void p.next();
         return;
       }
       if (payload.command === 'previous') {
-        void pb.previous();
+        void p.previous();
         return;
       }
       if (payload.command === 'openSettings') {
@@ -341,9 +348,28 @@ export function NowPlayingBar(): ReactElement {
       }
       if (payload.command === 'focusSearch') {
         void navigate('/search');
+        return;
+      }
+      if (payload.command === 'volumeUp') {
+        p.adjustVolumeBy(0.05);
+        return;
+      }
+      if (payload.command === 'volumeDown') {
+        p.adjustVolumeBy(-0.05);
+        return;
+      }
+      if (payload.command === 'toggleMute') {
+        const now = Date.now();
+        if (now - lastMuteShortcutMsRef.current < 420) {
+          return;
+        }
+        lastMuteShortcutMsRef.current = now;
+        void p.toggleMute();
+        return;
       }
     });
-  }, [navigate, pb]);
+  }, []);
+
   let trackTitle = 'Nothing playing';
   if (cur !== null) {
     trackTitle = pb.nowPlayingTrackTitle === null ? '…' : pb.nowPlayingTrackTitle;
