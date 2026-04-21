@@ -39,6 +39,8 @@ interface PlaybackState {
   queueIndex: number;
   context: PbCtx;
   error: string | null;
+  /** Non-blocking UX copy (Web Player adoption, poll mismatch); not cleared by successful finalize like `error`. */
+  playbackHint: string | null;
 }
 
 interface PlaybackApi extends PlaybackState {
@@ -70,6 +72,8 @@ interface PlaybackApi extends PlaybackState {
   confirmOpenSpotifyWebPlayer: () => Promise<void>;
   /** User dismissed the prompt without opening anything. */
   dismissSpotifyRemoteDevicePrompt: () => void;
+  /** Clears the in-app playback error and hint banners (does not change Spotify transport). */
+  dismissPlaybackError: () => void;
 }
 
 const Ctx = createContext<PlaybackApi | null>(null);
@@ -120,7 +124,19 @@ type SpotifyConnectDevice = {
  * player is scored lowest — on Linux it often fails DRM (Widevine) even when the API accepts play.
  */
 function isSpotifyBrowserWebPlayer(d: SpotifyConnectDevice): boolean {
-  return /web player/i.test(d.name ?? '');
+  const n = d.name ?? '';
+  if (/web player/i.test(n)) {
+    return true;
+  }
+  const t = d.type ?? '';
+  if (
+    t === 'Computer' &&
+    /chrome|firefox|edge|safari|brave|chromium|opera|vivaldi/i.test(n) &&
+    !/\bspotify\b.*\bfor\b\s+(linux|windows|mac)/i.test(n)
+  ) {
+    return true;
+  }
+  return false;
 }
 
 /** Higher score = preferred for laptop-first playback. */
@@ -158,6 +174,25 @@ function pickSpotifyConnectDevice(playable: SpotifyConnectDevice[]): SpotifyConn
   }
   const sorted = [...playable].sort((a, b) => laptopFirstConnectScore(b) - laptopFirstConnectScore(a));
   return sorted[0] ?? null;
+}
+
+/** When any device is active, restrict picking to active devices so a stale inactive desktop entry does not win scoring over an active Web Player or phone. */
+function poolConnectDevicesForPick(playable: SpotifyConnectDevice[]): SpotifyConnectDevice[] {
+  const active = playable.filter((d) => d.is_active);
+  return active.length > 0 ? active : playable;
+}
+
+/** After the user agrees to open open.spotify.com, prefer a browser Web Player tab over other active devices (e.g. a phone that still looks "active" but rejects transfer). */
+function pickSpotifyConnectDeviceAfterWebPlayerPrompt(playable: SpotifyConnectDevice[]): SpotifyConnectDevice | null {
+  if (playable.length === 0) {
+    return null;
+  }
+  const pool = poolConnectDevicesForPick(playable);
+  const web = pool.filter(isSpotifyBrowserWebPlayer);
+  if (web.length > 0) {
+    return pickSpotifyConnectDevice(web);
+  }
+  return pickSpotifyConnectDevice(pool);
 }
 
 function formatConnectDeviceLabel(dev: SpotifyConnectDevice): string {
@@ -226,6 +261,53 @@ async function waitForSpotifyActiveDevice(
   return { matched: false, lastHttpStatus };
 }
 
+const SPOTIFY_WEB_ADOPTION_POLL_MS = 600;
+const SPOTIFY_WEB_ADOPTION_MAX_MS = 22_000;
+
+/**
+ * Confirms Spotify's player API sees the given track actively playing on the target Connect device
+ * for several consecutive polls (avoids trusting brief optimistic snapshots).
+ */
+async function verifySpotifyConnectTrackPlayingOnDevice(
+  token: string,
+  wantUri: string,
+  deviceId: string
+): Promise<boolean> {
+  const requiredStreak = 3;
+  let streak = 0;
+  const adoptionDeadline = Date.now() + SPOTIFY_WEB_ADOPTION_MAX_MS;
+  while (Date.now() < adoptionDeadline) {
+    const pr = await fetch('https://api.spotify.com/v1/me/player', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (pr.status === 200) {
+      const pj = (await pr.json()) as {
+        is_playing?: boolean;
+        item?: { uri?: string };
+        device?: { id?: string };
+      };
+      const snapshotOk =
+        pj.is_playing === true &&
+        pj.item?.uri === wantUri &&
+        pj.device?.id === deviceId;
+      if (snapshotOk) {
+        streak++;
+        if (streak >= requiredStreak) {
+          return true;
+        }
+      } else {
+        streak = 0;
+      }
+    } else {
+      streak = 0;
+    }
+    await new Promise<void>((resolve) => {
+      window.setTimeout(resolve, SPOTIFY_WEB_ADOPTION_POLL_MS);
+    });
+  }
+  return false;
+}
+
 export function PlaybackProvider({ children }: { readonly children: ReactNode }): React.ReactElement {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const volumeRef = useRef(0.9);
@@ -246,6 +328,7 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
     queueIndex: 0,
     context: { kind: 'none' },
     error: null,
+    playbackHint: null,
   });
 
   const [primaryArtistDisplayName, setPrimaryArtistDisplayName] = useState<string | null>(null);
@@ -253,6 +336,7 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
   const [nowPlayingAlbumName, setNowPlayingAlbumName] = useState<string | null>(null);
   const [spotifyPlaybackMode, setSpotifyPlaybackMode] =
     useState<SpotifyPlaybackMode>('web-api-remote');
+  const spotifyPlaybackModeRef = useRef<SpotifyPlaybackMode>('web-api-remote');
   const [spotifyPlaybackMechanism, setSpotifyPlaybackMechanism] = useState<string | null>(null);
   const [spotifyRemoteDevicePromptOpen, setSpotifyRemoteDevicePromptOpen] = useState(false);
   const pendingRemotePlayRef = useRef<{
@@ -266,7 +350,7 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
   const lastSpotifySettingsNavMsRef = useRef(0);
 
   const navigateToSpotifyPlaybackSettings = useCallback((message: string) => {
-    setState((p) => ({ ...p, error: message }));
+    setState((p) => ({ ...p, error: message, playbackHint: null }));
     try {
       sessionStorage.setItem(SPOTIFY_PLAYBACK_SETTINGS_ERROR_STORAGE_KEY, message);
     } catch {
@@ -364,6 +448,10 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
   useEffect(() => {
     currentTrackRef.current = currentTrack;
   }, [currentTrack]);
+
+  useEffect(() => {
+    spotifyPlaybackModeRef.current = spotifyPlaybackMode;
+  }, [spotifyPlaybackMode]);
 
   useEffect(() => {
     if (currentTrack?.source !== 'spotify') {
@@ -562,20 +650,57 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
         }
         /** Spotify returns 204 when no active playback — body is empty; do not call json(). */
         if (res.status === 204) {
+          setState((prev) => {
+            if (prev.current?.source !== 'spotify') {
+              return prev;
+            }
+            if (spotifyPlaybackModeRef.current === 'web-playback-sdk') {
+              return prev;
+            }
+            if (!prev.isPlaying) {
+              return prev;
+            }
+            return { ...prev, isPlaying: false, playbackHint: null };
+          });
           return;
         }
         const j = (await res.json()) as {
           is_playing: boolean;
           progress_ms: number;
-          item: { duration_ms: number } | null;
+          item: { duration_ms?: number; uri?: string } | null;
           device?: { id?: string; name?: string; type?: string };
         };
-        setState((prev) => ({
-          ...prev,
-          isPlaying: j.is_playing,
-          positionMs: typeof j.progress_ms === 'number' ? j.progress_ms : prev.positionMs,
-          durationMs: j.item?.duration_ms ?? prev.durationMs,
-        }));
+        setState((prev) => {
+          let nextIsPlaying = j.is_playing;
+          let nextPlaybackHint = prev.playbackHint;
+          if (
+            spotifyPlaybackModeRef.current === 'web-api-remote' &&
+            prev.current?.source === 'spotify'
+          ) {
+            if (j.is_playing) {
+              const itemUri = j.item?.uri;
+              const matches =
+                itemUri !== undefined && itemUri !== '' && itemUri === prev.current.spotifyUri;
+              nextIsPlaying = matches;
+              if (matches) {
+                nextPlaybackHint = null;
+              } else {
+                nextPlaybackHint =
+                  prev.playbackHint ??
+                  'Spotify is playing a different track than the one shown in DeepCut, or the Web Player has not started this track yet. Press play once in the Spotify browser tab if nothing is playing there.';
+              }
+            } else {
+              nextIsPlaying = false;
+            }
+          }
+          return {
+            ...prev,
+            isPlaying: nextIsPlaying,
+            playbackHint: nextPlaybackHint,
+            positionMs: typeof j.progress_ms === 'number' ? j.progress_ms : prev.positionMs,
+            durationMs: j.item?.duration_ms ?? prev.durationMs,
+          };
+        });
         if (currentTrackRef.current?.source === 'spotify') {
           setSpotifyPlaybackMechanism(
             describeSpotifyMechanismFromPlayerApi({
@@ -619,6 +744,7 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
         queueIndex: index,
         isPlaying: true,
         error: null,
+        playbackHint: null,
         durationMs: Math.floor(a.duration * 1000) || prev.durationMs,
         positionMs: 0,
       }));
@@ -636,10 +762,13 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
     async (
       token: string,
       ref: Extract<TrackRef, { source: 'spotify' }>,
-      explicitDevice: SpotifyConnectDevice | null
+      explicitDevice: SpotifyConnectDevice | null,
+      avoidDeviceId: string | null = null
     ): Promise<{
       response: Response | null;
       targetedDeviceLabel: string | null;
+      targetedDeviceId: string | null;
+      targetedWasWebPlayer: boolean;
       /** `true` when the Web API returned no playable devices at all. */
       noDevices: boolean;
     }> => {
@@ -649,20 +778,59 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!devicesRes.ok) {
-          return { response: null, targetedDeviceLabel: null, noDevices: false };
+          return {
+            response: null,
+            targetedDeviceLabel: null,
+            targetedDeviceId: null,
+            targetedWasWebPlayer: false,
+            noDevices: false,
+          };
         }
         const devicesJson = (await devicesRes.json()) as { devices: SpotifyConnectDevice[] };
         const list = devicesJson.devices;
         if (list.length === 0) {
-          return { response: null, targetedDeviceLabel: null, noDevices: true };
+          return {
+            response: null,
+            targetedDeviceLabel: null,
+            targetedDeviceId: null,
+            targetedWasWebPlayer: false,
+            noDevices: true,
+          };
         }
-        const playable = list.filter((d) => d.id !== '' && !(d.is_restricted ?? false));
-        if (playable.length === 0) {
-          return { response: null, targetedDeviceLabel: null, noDevices: true };
+        const playableAll = list.filter((d) => d.id !== '' && !(d.is_restricted ?? false));
+        if (playableAll.length === 0) {
+          return {
+            response: null,
+            targetedDeviceLabel: null,
+            targetedDeviceId: null,
+            targetedWasWebPlayer: false,
+            noDevices: true,
+          };
         }
-        dev = pickSpotifyConnectDevice(playable);
+        let playable = playableAll;
+        if (avoidDeviceId !== null && avoidDeviceId !== '') {
+          const without = playableAll.filter((d) => d.id !== avoidDeviceId);
+          if (without.length === 0) {
+            return {
+              response: null,
+              targetedDeviceLabel: null,
+              targetedDeviceId: null,
+              targetedWasWebPlayer: false,
+              noDevices: true,
+            };
+          }
+          playable = without;
+        }
+        const pool = poolConnectDevicesForPick(playable);
+        dev = pickSpotifyConnectDevice(pool);
         if (dev === null) {
-          return { response: null, targetedDeviceLabel: null, noDevices: true };
+          return {
+            response: null,
+            targetedDeviceLabel: null,
+            targetedDeviceId: null,
+            targetedWasWebPlayer: false,
+            noDevices: true,
+          };
         }
       }
       const transferRes = await fetch('https://api.spotify.com/v1/me/player', {
@@ -673,23 +841,27 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
         },
         body: JSON.stringify({ device_ids: [dev.id], play: false }),
       });
+      let playResponse: Response | null = null;
       if (transferRes.ok || transferRes.status === 204) {
         await waitForSpotifyActiveDevice(token, dev.id, 25);
+        playResponse = await fetch(
+          `https://api.spotify.com/v1/me/player/play?device_id=${encodeURIComponent(dev.id)}`,
+          {
+            method: 'PUT',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ uris: [ref.spotifyUri] }),
+          }
+        );
       }
-      const playResponse = await fetch(
-        `https://api.spotify.com/v1/me/player/play?device_id=${encodeURIComponent(dev.id)}`,
-        {
-          method: 'PUT',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ uris: [ref.spotifyUri] }),
-        }
-      );
+      const outcomeResponse = playResponse ?? transferRes;
       return {
-        response: playResponse,
+        response: outcomeResponse,
         targetedDeviceLabel: formatConnectDeviceLabel(dev),
+        targetedDeviceId: dev.id,
+        targetedWasWebPlayer: isSpotifyBrowserWebPlayer(dev),
         noDevices: false,
       };
     },
@@ -732,6 +904,7 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
         queueIndex: index,
         isPlaying: true,
         error: null,
+        playbackHint: null,
         positionMs: 0,
         durationMs: 180_000,
       }));
@@ -766,6 +939,7 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
         return;
       }
       setSpotifyPlaybackMechanism(null);
+      setState((p) => ({ ...p, error: null, playbackHint: null }));
       let playRes: Response;
       if (spotifyPlaybackMode === 'web-playback-sdk') {
         const ready = await initSpotifyWebPlayback();
@@ -815,11 +989,11 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
         await finalizeSpotifyPlay(playRes, ref, ctx, index, queue);
         return;
       }
-      const remoteRes = await playViaSpotifyConnectImpl(token, ref, null);
+      let remoteRes = await playViaSpotifyConnectImpl(token, ref, null);
       if (remoteRes.response === null) {
         if (remoteRes.noDevices) {
           pendingRemotePlayRef.current = { ref, ctx, index, queue };
-          setState((p) => ({ ...p, error: null }));
+          setState((p) => ({ ...p, error: null, playbackHint: null }));
           setSpotifyRemoteDevicePromptOpen(true);
           return;
         }
@@ -829,17 +1003,69 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
         return;
       }
       playRes = remoteRes.response;
-      setSpotifyPlaybackMechanism(
-        `Spotify Connect — ${remoteRes.targetedDeviceLabel ?? 'device'}`
-      );
+      let mechanismLabel = remoteRes.targetedDeviceLabel;
+      const retryableRemote =
+        !playRes.ok &&
+        playRes.status !== 204 &&
+        (playRes.status === 502 ||
+          playRes.status === 503 ||
+          playRes.status === 504 ||
+          playRes.status === 404 ||
+          playRes.status === 500);
+      if (retryableRemote) {
+        const failedId = remoteRes.targetedDeviceId;
+        remoteRes = await playViaSpotifyConnectImpl(token, ref, null, failedId);
+        if (remoteRes.response !== null) {
+          playRes = remoteRes.response;
+          mechanismLabel = remoteRes.targetedDeviceLabel;
+        } else if (remoteRes.noDevices) {
+          pendingRemotePlayRef.current = { ref, ctx, index, queue };
+          setState((p) => ({ ...p, error: null, playbackHint: null }));
+          setSpotifyRemoteDevicePromptOpen(true);
+          return;
+        }
+      }
+      if ((playRes.ok || playRes.status === 204) && remoteRes.targetedDeviceId !== null) {
+        const adopted = await verifySpotifyConnectTrackPlayingOnDevice(
+          token,
+          ref.spotifyUri,
+          remoteRes.targetedDeviceId
+        );
+        if (!adopted) {
+          setSpotifyPlaybackMechanism(`Spotify Connect — ${mechanismLabel ?? 'device'}`);
+          startSpotifyPoll();
+          await persistSession({
+            currentTrack: ref,
+            positionMs: 0,
+            context: ctx,
+            updatedAt: new Date(),
+          });
+          setState((p) => ({
+            ...p,
+            current: ref,
+            context: ctx,
+            queue,
+            queueIndex: index,
+            isPlaying: false,
+            durationMs: 180_000,
+            positionMs: 0,
+            playbackHint:
+              'Spotify did not confirm this track is playing on the chosen device (often the Web Player needs one play in the browser first). Try that, then press Play in DeepCut again.',
+          }));
+          return;
+        }
+      }
+      setSpotifyPlaybackMechanism(`Spotify Connect — ${mechanismLabel ?? 'device'}`);
       await finalizeSpotifyPlay(playRes, ref, ctx, index, queue);
     },
     [
       finalizeSpotifyPlay,
       initSpotifyWebPlayback,
       navigateToSpotifyPlaybackSettings,
+      persistSession,
       playViaSpotifyConnectImpl,
       spotifyPlaybackMode,
+      startSpotifyPoll,
     ]
   );
 
@@ -849,8 +1075,9 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
     if (pending === null) {
       return;
     }
+    const webLaunchUrl = `https://open.spotify.com/track/${encodeURIComponent(pending.ref.spotifyId)}`;
     try {
-      await window.deepcut.openExternalUrl('https://open.spotify.com/');
+      await window.deepcut.openExternalUrl(webLaunchUrl);
     } catch {
       /* continue; user may have their own tab open already */
     }
@@ -862,7 +1089,7 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
       );
       return;
     }
-    const pollUntil = Date.now() + 20_000;
+    const pollUntil = Date.now() + 45_000;
     let detected: SpotifyConnectDevice | null = null;
     while (Date.now() < pollUntil) {
       try {
@@ -875,8 +1102,9 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
             (d) => d.id !== '' && !(d.is_restricted ?? false)
           );
           if (playable.length > 0) {
-            detected = pickSpotifyConnectDevice(playable);
-            if (detected !== null) {
+            const candidate = pickSpotifyConnectDeviceAfterWebPlayerPrompt(playable);
+            if (candidate !== null && isSpotifyBrowserWebPlayer(candidate)) {
+              detected = candidate;
               break;
             }
           }
@@ -891,23 +1119,83 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
     if (detected === null) {
       pendingRemotePlayRef.current = null;
       navigateToSpotifyPlaybackSettings(
-        'Spotify Web Player was not detected within 20s. Sign in at open.spotify.com in your browser and try Play again, or switch to Web Playback SDK in Settings.'
+        'Spotify Web Player did not appear in Connect within 45s. Keep the browser tab on open.spotify.com, sign in if needed, then try Play again in DeepCut—or switch to Web Playback SDK in Settings.'
       );
       return;
     }
-    const playRes = await playViaSpotifyConnectImpl(token, pending.ref, detected);
+    let connectPlay = await playViaSpotifyConnectImpl(token, pending.ref, detected);
+    if (
+      connectPlay.response !== null &&
+      !connectPlay.response.ok &&
+      connectPlay.response.status !== 204 &&
+      (connectPlay.response.status === 502 ||
+        connectPlay.response.status === 503 ||
+        connectPlay.response.status === 504 ||
+        connectPlay.response.status === 404 ||
+        connectPlay.response.status === 500)
+    ) {
+      const failedId = connectPlay.targetedDeviceId;
+      connectPlay = await playViaSpotifyConnectImpl(token, pending.ref, null, failedId);
+    }
     pendingRemotePlayRef.current = null;
-    if (playRes.response === null) {
+    if (connectPlay.response === null) {
+      if (connectPlay.noDevices) {
+        setState((p) => ({
+          ...p,
+          playbackHint:
+            'Spotify in the browser is not ready yet, or no other device is available. Leave open.spotify.com signed in for a few seconds, then try Play again in DeepCut.',
+        }));
+        return;
+      }
       navigateToSpotifyPlaybackSettings(
         'Spotify rejected playback on the detected device. Try again or pick a different Spotify client in Settings → Spotify.'
       );
       return;
     }
+    if (!connectPlay.response.ok && connectPlay.response.status !== 204) {
+      setState((p) => ({
+        ...p,
+        playbackHint:
+          'We could not hand off playback to Spotify yet. If your browser opened Spotify, start playback there once, then press Play again in DeepCut.',
+      }));
+      return;
+    }
+
+    const wantUri = pending.ref.spotifyUri;
+    const webPlaybackAdopted = await verifySpotifyConnectTrackPlayingOnDevice(
+      token,
+      wantUri,
+      detected.id
+    );
+    if (!webPlaybackAdopted) {
+      setSpotifyPlaybackMechanism(
+        `Spotify Connect — ${connectPlay.targetedDeviceLabel ?? 'device'}`
+      );
+      startSpotifyPoll();
+      await persistSession({
+        currentTrack: pending.ref,
+        positionMs: 0,
+        context: pending.ctx,
+        updatedAt: new Date(),
+      });
+      setState((p) => ({
+        ...p,
+        current: pending.ref,
+        context: pending.ctx,
+        queue: pending.queue,
+        queueIndex: pending.index,
+        isPlaying: false,
+        playbackHint:
+          'The Web Player tab is still finishing setup (DRM or autoplay). Press play once in the Spotify browser tab, then press Play again in DeepCut—no need to pause here first.',
+      }));
+      return;
+    }
+
     setSpotifyPlaybackMechanism(
-      `Spotify Connect — ${playRes.targetedDeviceLabel ?? 'device'}`
+      `Spotify Connect — ${connectPlay.targetedDeviceLabel ?? 'device'}`
     );
     await finalizeSpotifyPlay(
-      playRes.response,
+      connectPlay.response,
       pending.ref,
       pending.ctx,
       pending.index,
@@ -916,12 +1204,18 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
   }, [
     finalizeSpotifyPlay,
     navigateToSpotifyPlaybackSettings,
+    persistSession,
     playViaSpotifyConnectImpl,
+    startSpotifyPoll,
   ]);
 
   const dismissSpotifyRemoteDevicePrompt = useCallback((): void => {
     pendingRemotePlayRef.current = null;
     setSpotifyRemoteDevicePromptOpen(false);
+  }, []);
+
+  const dismissPlaybackError = useCallback((): void => {
+    setState((p) => ({ ...p, error: null, playbackHint: null }));
   }, []);
 
   const playRefInternal = useCallback(
@@ -1087,11 +1381,13 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
       return;
     }
     const endpoint = state.isPlaying ? 'pause' : 'play';
-    await fetch(`https://api.spotify.com/v1/me/player/${endpoint}`, {
+    const transportRes = await fetch(`https://api.spotify.com/v1/me/player/${endpoint}`, {
       method: 'PUT',
       headers: { Authorization: `Bearer ${token}` },
     });
-    setState((p) => ({ ...p, isPlaying: !p.isPlaying }));
+    if (transportRes.ok || transportRes.status === 204) {
+      setState((p) => ({ ...p, isPlaying: !p.isPlaying }));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- use snapshot of playing state
   }, [spotifyPlaybackMode, state.current, state.isPlaying]);
 
@@ -1245,6 +1541,7 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
     spotifyRemoteDevicePromptOpen,
     confirmOpenSpotifyWebPlayer,
     dismissSpotifyRemoteDevicePrompt,
+    dismissPlaybackError,
     playRef,
     togglePlay,
     seek,
