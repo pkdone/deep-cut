@@ -432,6 +432,7 @@ export function SettingsPage(): React.ReactElement {
               id="openai-api-key"
               type="password"
               autoComplete="off"
+              title="OpenAI API key used for artist enrichment requests."
               value={s.openaiApiKey ?? ''}
               onChange={(e) => { setS({ ...s, openaiApiKey: e.target.value }); }}
             />
