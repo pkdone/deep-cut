@@ -120,6 +120,20 @@ export function SettingsPage(): React.ReactElement {
     if (s === null) {
       return undefined;
     }
+    if (searchParams.get('firstRun') !== '1' || s.firstRunWizardCompleted === true) {
+      return undefined;
+    }
+    const next = { ...s, firstRunWizardCompleted: true };
+    void window.deepcut.saveSettings(next).then(() => {
+      setS(next);
+    });
+    return undefined;
+  }, [s, searchParams]);
+
+  useEffect(() => {
+    if (s === null) {
+      return undefined;
+    }
     const tab = searchParams.get('tab');
     if (tab === null || !Object.hasOwn(SETTINGS_TAB_PANELS, tab)) {
       return undefined;
@@ -163,7 +177,6 @@ export function SettingsPage(): React.ReactElement {
   if (!s) {
     return <p>Loading…</p>;
   }
-  const firstRun = searchParams.get('firstRun') === '1' && !(s.firstRunWizardCompleted ?? false);
 
   const spotifyConnected = spotifyStatus?.connected ?? false;
   const canConnectSpotify = !spotifyAuthBusy && !spotifyConnected;
@@ -177,24 +190,6 @@ export function SettingsPage(): React.ReactElement {
 
   return (
     <div className="settings-page">
-      {firstRun ? (
-        <div className="panel">
-          <h2>Welcome to DeepCut</h2>
-          <p className="subtitle">
-            Complete Spotify and LLM setup here so Search, Now Playing insights, and playback features
-            are fully enabled.
-          </p>
-          <button
-            type="button"
-            className="primary"
-            onClick={() => {
-              void persistSettings({ ...s, firstRunWizardCompleted: true });
-            }}
-          >
-            Mark setup guide as seen
-          </button>
-        </div>
-      ) : null}
       {saveNotice !== null ? (
         <div className="settings-save-notice" role="status" aria-live="polite">
           {saveNotice}
