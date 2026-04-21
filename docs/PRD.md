@@ -212,6 +212,8 @@ DeepCut v1 uses **both** the **Spotify Web API** (search, metadata, playlists as
 
 The app **does not** automatically switch between these modes when one fails; the user adjusts Settings → Spotify and retries. Controlling another Spotify app is the normal **remote device** behaviour, not a silent fallback from in-app playback.
 
+**Volume and mute (local vs Spotify, honesty vs remote devices)** and **pausing the other source when switching** between Spotify and local playback are specified in engineering terms in **ADR-005** (`docs/adr/005-playback-volume-mute-and-cross-source-handoff.md`).
+
 ### 7.5 Acceptance Criteria
 
 - The user can connect a Spotify account from the app (**OAuth via browser on each cold start** for v1).

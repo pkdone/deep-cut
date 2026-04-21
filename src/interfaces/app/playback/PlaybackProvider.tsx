@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -28,6 +29,15 @@ function basenameFromPath(p: string): string {
   return dot > 0 ? base.slice(0, dot) : base;
 }
 
+/** True when Spotify Web API rejected remote volume/mute for the active Connect device. */
+function isSpotifyRemoteVolumeDisallowed(httpStatus: number, errorBody: string): boolean {
+  if (httpStatus !== 403) {
+    return false;
+  }
+  const t = errorBody.toLowerCase();
+  return t.includes('volume_control_disallow') || t.includes('cannot control device volume');
+}
+
 interface PlaybackState {
   current: TrackRef | null;
   isPlaying: boolean;
@@ -41,6 +51,11 @@ interface PlaybackState {
   error: string | null;
   /** Non-blocking UX copy (Web Player adoption, poll mismatch); not cleared by successful finalize like `error`. */
   playbackHint: string | null;
+  /**
+   * User-facing notice shown in the playback banner until dismissed (not cleared by Spotify poll).
+   * Used for capability limits such as Connect devices that disallow remote volume.
+   */
+  playbackNotice: string | null;
 }
 
 interface PlaybackApi extends PlaybackState {
@@ -56,6 +71,8 @@ interface PlaybackApi extends PlaybackState {
   next: () => Promise<void>;
   previous: () => Promise<void>;
   setVolume: (v: number) => Promise<void>;
+  /** Nudge volume using the latest in-app level (safe for global shortcuts; avoids stale render reads). */
+  adjustVolumeBy: (delta: number) => void;
   toggleMute: () => Promise<void>;
   setQueue: (tracks: TrackRef[], startIndex: number, ctx: PbCtx) => Promise<void>;
   enqueueRef: (ref: TrackRef) => Promise<void>;
@@ -72,7 +89,7 @@ interface PlaybackApi extends PlaybackState {
   confirmOpenSpotifyWebPlayer: () => Promise<void>;
   /** User dismissed the prompt without opening anything. */
   dismissSpotifyRemoteDevicePrompt: () => void;
-  /** Clears the in-app playback error and hint banners (does not change Spotify transport). */
+  /** Clears the in-app playback error, hint, and notice banners (does not change Spotify transport). */
   dismissPlaybackError: () => void;
 }
 
@@ -316,6 +333,10 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
   const spotifyWebPlayerRef = useRef<SpotifyPlayerLike | null>(null);
   const spotifyWebDeviceIdRef = useRef<string | null>(null);
   const spotifyWebInitFailedRef = useRef(false);
+  /** Last active Connect device id from GET /me/player (for volume API). */
+  const spotifyActiveDeviceIdRef = useRef<string | null>(null);
+  const spotifyRemoteVolDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingSpotifyRemoteVolumeRef = useRef<number | null>(null);
 
   const [state, setState] = useState<PlaybackState>({
     current: null,
@@ -329,6 +350,7 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
     context: { kind: 'none' },
     error: null,
     playbackHint: null,
+    playbackNotice: null,
   });
 
   const [primaryArtistDisplayName, setPrimaryArtistDisplayName] = useState<string | null>(null);
@@ -347,6 +369,11 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
   } | null>(null);
   const currentTrackRef = useRef<TrackRef | null>(null);
   /**
+   * While `playLocal` is in progress, `current` may still be Spotify until `setState` runs after
+   * `audio.play()` — volume/mute must still target the local element during that window.
+   */
+  const localPlaybackArmRef = useRef(false);
+  /**
    * `true` once the user has deliberately started playback from DeepCut this session.
    * Until then, a restored-session "current track" differing from whatever Spotify is
    * doing externally is informational (Spotify is busy elsewhere), not a mismatch warning.
@@ -356,7 +383,7 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
   const lastSpotifySettingsNavMsRef = useRef(0);
 
   const navigateToSpotifyPlaybackSettings = useCallback((message: string) => {
-    setState((p) => ({ ...p, error: message, playbackHint: null }));
+    setState((p) => ({ ...p, error: message, playbackHint: null, playbackNotice: null }));
     try {
       sessionStorage.setItem(SPOTIFY_PLAYBACK_SETTINGS_ERROR_STORAGE_KEY, message);
     } catch {
@@ -451,8 +478,15 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
     };
   }, [currentTrack]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     currentTrackRef.current = currentTrack;
+  }, [currentTrack]);
+
+  useEffect(() => {
+    const src = currentTrack?.source;
+    if (src !== 'spotify') {
+      setState((p) => (p.playbackNotice !== null ? { ...p, playbackNotice: null } : p));
+    }
   }, [currentTrack]);
 
   useEffect(() => {
@@ -656,6 +690,7 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
         }
         /** Spotify returns 204 when no active playback — body is empty; do not call json(). */
         if (res.status === 204) {
+          spotifyActiveDeviceIdRef.current = null;
           setState((prev) => {
             if (prev.current?.source !== 'spotify') {
               return prev;
@@ -676,6 +711,9 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
           item: { duration_ms?: number; uri?: string } | null;
           device?: { id?: string; name?: string; type?: string };
         };
+        const did = j.device?.id;
+        spotifyActiveDeviceIdRef.current =
+          did !== undefined && did !== '' ? did : null;
         setState((prev) => {
           let nextIsPlaying = j.is_playing;
           let nextPlaybackHint = prev.playbackHint;
@@ -739,37 +777,52 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
 
   const playLocal = useCallback(
     async (ref: Extract<TrackRef, { source: 'local' }>, ctx: PbCtx, index: number, queue: TrackRef[]): Promise<void> => {
-      hasAttemptedPlaybackRef.current = true;
-      stopSpotifyPoll();
-      setSpotifyPlaybackMechanism(null);
       const a = audioRef.current;
       if (!a) {
         return;
       }
-      a.src = pathToFileUrl(ref.filePath);
-      a.volume = volumeRef.current;
-      a.muted = mutedRef.current;
-      await a.play().catch((e: unknown) => {
-        setState((p) => ({ ...p, error: String(e) }));
-      });
-      setState((prev) => ({
-        ...prev,
-        current: ref,
-        context: ctx,
-        queue,
-        queueIndex: index,
-        isPlaying: true,
-        error: null,
-        playbackHint: null,
-        durationMs: Math.floor(a.duration * 1000) || prev.durationMs,
-        positionMs: 0,
-      }));
-      await persistSession({
-        currentTrack: ref,
-        positionMs: 0,
-        context: ctx,
-        updatedAt: new Date(),
-      });
+      localPlaybackArmRef.current = true;
+      try {
+        if (currentTrackRef.current?.source === 'spotify') {
+          const token = await window.deepcut.getSpotifyAccessToken();
+          if (token !== null) {
+            await fetch('https://api.spotify.com/v1/me/player/pause', {
+              method: 'PUT',
+              headers: { Authorization: `Bearer ${token}` },
+            });
+          }
+        }
+        hasAttemptedPlaybackRef.current = true;
+        stopSpotifyPoll();
+        setSpotifyPlaybackMechanism(null);
+        a.src = pathToFileUrl(ref.filePath);
+        a.volume = volumeRef.current;
+        a.muted = mutedRef.current;
+        await a.play().catch((e: unknown) => {
+          setState((p) => ({ ...p, error: String(e) }));
+        });
+        setState((prev) => ({
+          ...prev,
+          current: ref,
+          context: ctx,
+          queue,
+          queueIndex: index,
+          isPlaying: true,
+          error: null,
+          playbackHint: null,
+          playbackNotice: null,
+          durationMs: Math.floor(a.duration * 1000) || prev.durationMs,
+          positionMs: 0,
+        }));
+        await persistSession({
+          currentTrack: ref,
+          positionMs: 0,
+          context: ctx,
+          updatedAt: new Date(),
+        });
+      } finally {
+        localPlaybackArmRef.current = false;
+      }
     },
     [persistSession]
   );
@@ -921,6 +974,7 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
         isPlaying: true,
         error: null,
         playbackHint: null,
+        playbackNotice: null,
         positionMs: 0,
         durationMs: 180_000,
       }));
@@ -956,7 +1010,7 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
         return;
       }
       setSpotifyPlaybackMechanism(null);
-      setState((p) => ({ ...p, error: null, playbackHint: null }));
+      setState((p) => ({ ...p, error: null, playbackHint: null, playbackNotice: null }));
       let playRes: Response;
       if (spotifyPlaybackMode === 'web-playback-sdk') {
         const ready = await initSpotifyWebPlayback();
@@ -1010,7 +1064,7 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
       if (remoteRes.response === null) {
         if (remoteRes.noDevices) {
           pendingRemotePlayRef.current = { ref, ctx, index, queue };
-          setState((p) => ({ ...p, error: null, playbackHint: null }));
+          setState((p) => ({ ...p, error: null, playbackHint: null, playbackNotice: null }));
           setSpotifyRemoteDevicePromptOpen(true);
           return;
         }
@@ -1037,7 +1091,7 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
           mechanismLabel = remoteRes.targetedDeviceLabel;
         } else if (remoteRes.noDevices) {
           pendingRemotePlayRef.current = { ref, ctx, index, queue };
-          setState((p) => ({ ...p, error: null, playbackHint: null }));
+          setState((p) => ({ ...p, error: null, playbackHint: null, playbackNotice: null }));
           setSpotifyRemoteDevicePromptOpen(true);
           return;
         }
@@ -1232,7 +1286,7 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
   }, []);
 
   const dismissPlaybackError = useCallback((): void => {
-    setState((p) => ({ ...p, error: null, playbackHint: null }));
+    setState((p) => ({ ...p, error: null, playbackHint: null, playbackNotice: null }));
   }, []);
 
   const playRefInternal = useCallback(
@@ -1257,6 +1311,21 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
         return { ...prev, positionMs: Math.floor(a.currentTime * 1000) };
       });
     });
+    a.addEventListener('volumechange', () => {
+      setState((prev) => {
+        if (prev.current?.source !== 'local') {
+          return prev;
+        }
+        if (Math.abs(prev.volume - a.volume) < 1e-5 && prev.isMuted === a.muted) {
+          return prev;
+        }
+        return {
+          ...prev,
+          volume: a.volume,
+          isMuted: a.muted,
+        };
+      });
+    });
     a.addEventListener('ended', () => {
       setState((prev) => {
         const nextIdx = prev.queueIndex + 1;
@@ -1269,6 +1338,11 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
       });
     });
     return () => {
+      if (spotifyRemoteVolDebounceTimerRef.current !== null) {
+        clearTimeout(spotifyRemoteVolDebounceTimerRef.current);
+        spotifyRemoteVolDebounceTimerRef.current = null;
+      }
+      pendingSpotifyRemoteVolumeRef.current = null;
       stopSpotifyPoll();
       spotifyWebPlayerRef.current?.disconnect();
       spotifyWebPlayerRef.current = null;
@@ -1456,55 +1530,139 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
       return;
     }
     const vol = Math.min(1, Math.max(0, v));
-    setState((p) => ({ ...p, volume: vol, isMuted: false }));
 
-    const cur = state.current;
-    if (cur?.source === 'local' && audioRef.current) {
+    if (localPlaybackArmRef.current && audioRef.current) {
       const a = audioRef.current;
       a.volume = vol;
       a.muted = false;
+      setState((p) => ({ ...p, volume: vol, isMuted: false }));
+      return;
     }
 
+    const cur = currentTrackRef.current;
     if (cur?.source !== 'spotify') {
+      if (cur?.source === 'local' && audioRef.current) {
+        const a = audioRef.current;
+        a.volume = vol;
+        a.muted = false;
+      }
+      setState((p) => ({ ...p, volume: vol, isMuted: false }));
       return;
     }
-    if (spotifyPlaybackMode === 'web-playback-sdk' && spotifyWebPlayerRef.current !== null) {
+    if (spotifyPlaybackModeRef.current === 'web-playback-sdk' && spotifyWebPlayerRef.current !== null) {
       await spotifyWebPlayerRef.current.setVolume(vol);
+      setState((p) => ({ ...p, volume: vol, isMuted: false }));
       return;
     }
 
-    const token = await window.deepcut.getSpotifyAccessToken();
-    if (!token) {
+    if (spotifyPlaybackModeRef.current !== 'web-api-remote') {
       return;
     }
-    try {
-      await fetch(
-        `https://api.spotify.com/v1/me/player/volume?volume_percent=${Math.round(vol * 100)}`,
-        {
-          method: 'PUT',
-          headers: { Authorization: `Bearer ${token}` },
-        }
-      );
-    } catch {
-      /* ignore network errors */
+
+    pendingSpotifyRemoteVolumeRef.current = vol;
+    if (spotifyRemoteVolDebounceTimerRef.current !== null) {
+      clearTimeout(spotifyRemoteVolDebounceTimerRef.current);
     }
-  }, [spotifyPlaybackMode, state]);
+    spotifyRemoteVolDebounceTimerRef.current = setTimeout(() => {
+      spotifyRemoteVolDebounceTimerRef.current = null;
+      void (async () => {
+        const volToSend = pendingSpotifyRemoteVolumeRef.current;
+        pendingSpotifyRemoteVolumeRef.current = null;
+        if (volToSend === null || !Number.isFinite(volToSend)) {
+          return;
+        }
+        if (currentTrackRef.current?.source !== 'spotify') {
+          return;
+        }
+        if (spotifyPlaybackModeRef.current !== 'web-api-remote') {
+          return;
+        }
+        const token = await window.deepcut.getSpotifyAccessToken();
+        if (!token) {
+          return;
+        }
+        const params = new URLSearchParams({
+          volume_percent: String(Math.round(volToSend * 100)),
+        });
+        const devId = spotifyActiveDeviceIdRef.current;
+        if (devId !== null && devId !== '') {
+          params.set('device_id', devId);
+        }
+        try {
+          const res = await fetch(
+            `https://api.spotify.com/v1/me/player/volume?${params.toString()}`,
+            {
+              method: 'PUT',
+              headers: { Authorization: `Bearer ${token}` },
+            }
+          );
+          let errorBody = '';
+          if (!res.ok) {
+            try {
+              const text = await res.text();
+              if (text.trim() !== '') {
+                errorBody = text.length > 240 ? `${text.slice(0, 240)}...` : text;
+              }
+            } catch {
+              /* ignore response parse errors */
+            }
+          }
+          if (res.ok || res.status === 204) {
+            setState((p) => ({
+              ...p,
+              volume: volToSend,
+              isMuted: false,
+              playbackHint: null,
+              playbackNotice: null,
+            }));
+          } else {
+            const disallow = isSpotifyRemoteVolumeDisallowed(res.status, errorBody);
+            let remoteVolumeHint = 'Spotify Connect rejected volume control for the active device.';
+            if (disallow) {
+              remoteVolumeHint =
+                'This Spotify device does not allow remote volume control. Use system or hardware volume instead.';
+            }
+            setState((p) => ({
+              ...p,
+              volume: disallow ? volToSend : p.volume,
+              isMuted: disallow ? false : p.isMuted,
+              playbackNotice: p.current?.source === 'spotify' ? remoteVolumeHint : p.playbackNotice,
+            }));
+          }
+        } catch {
+          /* ignore network errors */
+        }
+      })();
+    }, 140);
+  }, []);
 
   const toggleMute = useCallback(async (): Promise<void> => {
-    const cur = state.current;
-    const nextMuted = !state.isMuted;
-    setState((p) => ({ ...p, isMuted: nextMuted }));
+    const nextMuted = !mutedRef.current;
+    const cur = currentTrackRef.current;
+
+    if (localPlaybackArmRef.current && audioRef.current) {
+      mutedRef.current = nextMuted;
+      setState((p) => ({ ...p, isMuted: nextMuted }));
+      audioRef.current.muted = nextMuted;
+      return;
+    }
 
     if (cur?.source === 'local' && audioRef.current) {
+      mutedRef.current = nextMuted;
+      setState((p) => ({ ...p, isMuted: nextMuted }));
       audioRef.current.muted = nextMuted;
       return;
     }
 
     if (cur?.source !== 'spotify') {
+      mutedRef.current = nextMuted;
+      setState((p) => ({ ...p, isMuted: nextMuted }));
       return;
     }
-    if (spotifyPlaybackMode === 'web-playback-sdk' && spotifyWebPlayerRef.current !== null) {
+    if (spotifyPlaybackModeRef.current === 'web-playback-sdk' && spotifyWebPlayerRef.current !== null) {
       await spotifyWebPlayerRef.current.setVolume(nextMuted ? 0 : volumeRef.current);
+      mutedRef.current = nextMuted;
+      setState((p) => ({ ...p, isMuted: nextMuted }));
       return;
     }
 
@@ -1513,15 +1671,66 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
       return;
     }
     const pct = nextMuted ? 0 : Math.round(volumeRef.current * 100);
+    const params = new URLSearchParams({ volume_percent: String(pct) });
+    const devId = spotifyActiveDeviceIdRef.current;
+    if (devId !== null && devId !== '') {
+      params.set('device_id', devId);
+    }
     try {
-      await fetch(`https://api.spotify.com/v1/me/player/volume?volume_percent=${pct}`, {
-        method: 'PUT',
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await fetch(
+        `https://api.spotify.com/v1/me/player/volume?${params.toString()}`,
+        {
+          method: 'PUT',
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      let errorBody = '';
+      if (!res.ok) {
+        try {
+          const text = await res.text();
+          if (text.trim() !== '') {
+            errorBody = text.length > 240 ? `${text.slice(0, 240)}...` : text;
+          }
+        } catch {
+          /* ignore response parse errors */
+        }
+      }
+      if (res.ok || res.status === 204) {
+        mutedRef.current = nextMuted;
+        setState((p) => ({
+          ...p,
+          isMuted: nextMuted,
+          playbackHint: null,
+          playbackNotice: null,
+        }));
+      } else {
+        const disallow = isSpotifyRemoteVolumeDisallowed(res.status, errorBody);
+        let remoteMuteHint = 'Spotify Connect rejected mute control for the active device.';
+        if (disallow) {
+          remoteMuteHint =
+            'This Spotify device does not allow remote mute; audio is unchanged.';
+        }
+        setState((p) => ({
+          ...p,
+          isMuted: disallow ? false : p.isMuted,
+          playbackNotice: p.current?.source === 'spotify' ? remoteMuteHint : p.playbackNotice,
+        }));
+      }
     } catch {
       /* ignore network errors */
     }
-  }, [spotifyPlaybackMode, state]);
+  }, []);
+
+  const adjustVolumeBy = useCallback(
+    (delta: number): void => {
+      if (!Number.isFinite(delta)) {
+        return;
+      }
+      const next = Math.min(1, Math.max(0, volumeRef.current + delta));
+      void setVolume(next);
+    },
+    [setVolume]
+  );
 
   useEffect(() => {
     void (async () => {
@@ -1565,6 +1774,7 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
     next,
     previous,
     setVolume,
+    adjustVolumeBy,
     toggleMute,
     setQueue,
     enqueueRef,

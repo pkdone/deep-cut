@@ -7,7 +7,7 @@ import { usePlayback } from './playback/PlaybackProvider.js';
 
 function PlaybackErrorBanner(): ReactElement | null {
   const pb = usePlayback();
-  const message = pb.error ?? pb.playbackHint;
+  const message = pb.error ?? pb.playbackNotice ?? pb.playbackHint;
   if (message === null || message === '') {
     return null;
   }
