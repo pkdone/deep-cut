@@ -42,6 +42,12 @@ button {
   min-height: 100vh;
 }
 
+.app-top-chrome {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
 .top-nav {
   display: flex;
   gap: 0;
@@ -783,6 +789,33 @@ button.np-slider-mute-btn:focus-visible {
 .error-text {
   color: #f87171;
   font-size: 0.9rem;
+}
+
+.playback-error-banner {
+  position: relative;
+  z-index: 100;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.65rem 1rem;
+  background: rgba(127, 29, 29, 0.45);
+  border-bottom: 1px solid #f87171;
+  border-left: 4px solid #ef4444;
+}
+
+.playback-error-banner-text {
+  margin: 0;
+  flex: 1;
+  font-size: 0.88rem;
+  line-height: 1.4;
+  color: #fecaca;
+  font-weight: 500;
+}
+
+.playback-error-banner-dismiss {
+  flex-shrink: 0;
+  font-size: 0.82rem;
+  padding: 0.25rem 0.6rem;
 }
 
 .subtitle {

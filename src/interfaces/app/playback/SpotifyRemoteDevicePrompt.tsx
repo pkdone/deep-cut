@@ -31,8 +31,8 @@ export function SpotifyRemoteDevicePrompt(): ReactElement | null {
         <h2>No Spotify device available</h2>
         <p>
           DeepCut uses another Spotify app (desktop, phone, speaker, or the Spotify Web Player in
-          your browser) to play audio. Open the Spotify Web Player now and keep the tab open —
-          DeepCut will start playback automatically when it appears.
+          your browser) to play audio. This opens your track in the browser so the Web Player can
+          finish loading; keep that tab in the foreground until playback starts in DeepCut.
         </p>
         <p className="subtitle">
           If you have not signed into Spotify in your browser yet, sign in once; the browser will

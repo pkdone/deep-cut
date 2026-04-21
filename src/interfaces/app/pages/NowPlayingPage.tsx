@@ -103,6 +103,7 @@ function InsightReferenceLink(props: {
 
 export function NowPlayingPage(): ReactElement {
   const pb = usePlayback();
+  const playbackBannerMessage = pb.error ?? pb.playbackHint;
   const cur = pb.current;
   const prevTrackIdentityRef = useRef<string | null>(null);
   const insightFetchRunIdRef = useRef(0);
@@ -401,7 +402,7 @@ export function NowPlayingPage(): ReactElement {
   return (
     <div>
       {cur === null ? <p className="subtitle">Nothing playing.</p> : null}
-      {pb.error ? <p className="error-text">{pb.error}</p> : null}
+      {playbackBannerMessage ? <p className="error-text">{playbackBannerMessage}</p> : null}
 
       {cur !== null ? (
         <div className="panel">
