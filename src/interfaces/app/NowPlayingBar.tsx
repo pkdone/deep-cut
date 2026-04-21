@@ -349,7 +349,6 @@ export function NowPlayingBar(): ReactElement {
     trackTitle = pb.nowPlayingTrackTitle === null ? '…' : pb.nowPlayingTrackTitle;
   }
   const trackArtist = pb.primaryArtistDisplayName ?? '';
-  const playbackBannerMessage = pb.error ?? pb.playbackHint;
 
   let label = '—';
   if (cur?.source === 'spotify') {
@@ -436,11 +435,6 @@ export function NowPlayingBar(): ReactElement {
       </div>
       <div className="np-status-column">
         <IntegrationStatusStrip />
-        {playbackBannerMessage ? (
-          <div className="np-playback-error">
-            <span className="error-text">{playbackBannerMessage}</span>
-          </div>
-        ) : null}
       </div>
       {queueOpen ? (
         <div className="np-queue-popover panel" role="dialog" aria-label="Playback queue">

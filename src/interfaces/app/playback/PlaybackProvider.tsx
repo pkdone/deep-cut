@@ -346,6 +346,12 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
     queue: TrackRef[];
   } | null>(null);
   const currentTrackRef = useRef<TrackRef | null>(null);
+  /**
+   * `true` once the user has deliberately started playback from DeepCut this session.
+   * Until then, a restored-session "current track" differing from whatever Spotify is
+   * doing externally is informational (Spotify is busy elsewhere), not a mismatch warning.
+   */
+  const hasAttemptedPlaybackRef = useRef(false);
   const navigate = useNavigate();
   const lastSpotifySettingsNavMsRef = useRef(0);
 
@@ -684,10 +690,19 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
               nextIsPlaying = matches;
               if (matches) {
                 nextPlaybackHint = null;
-              } else {
+              } else if (hasAttemptedPlaybackRef.current) {
+                const devLabel = formatConnectDeviceLabel({
+                  id: j.device?.id ?? '',
+                  is_active: true,
+                  name: j.device?.name,
+                  type: j.device?.type,
+                });
+                /** Describe the external device/track truthfully; do not assume a browser Web Player tab is involved. */
                 nextPlaybackHint =
                   prev.playbackHint ??
-                  'Spotify is playing a different track than the one shown in DeepCut, or the Web Player has not started this track yet. Press play once in the Spotify browser tab if nothing is playing there.';
+                  `Spotify is playing a different track on ${devLabel}. DeepCut will sync once you start playback from here, or that device catches up.`;
+              } else {
+                nextPlaybackHint = null;
               }
             } else {
               nextIsPlaying = false;
@@ -724,6 +739,7 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
 
   const playLocal = useCallback(
     async (ref: Extract<TrackRef, { source: 'local' }>, ctx: PbCtx, index: number, queue: TrackRef[]): Promise<void> => {
+      hasAttemptedPlaybackRef.current = true;
       stopSpotifyPoll();
       setSpotifyPlaybackMechanism(null);
       const a = audioRef.current;
@@ -926,6 +942,7 @@ export function PlaybackProvider({ children }: { readonly children: ReactNode })
       index: number,
       queue: TrackRef[]
     ): Promise<void> => {
+      hasAttemptedPlaybackRef.current = true;
       const a = audioRef.current;
       if (a) {
         a.pause();
